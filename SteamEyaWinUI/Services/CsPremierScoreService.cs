@@ -10,8 +10,17 @@ internal sealed class CsPremierScoreService
     private const uint ClientWelcome = 4004;
     private const uint ClientRequestPlayersProfile = 9127;
     private const uint PlayersProfile = 9128;
+    private const uint MatchmakingClient2GCHello = 9109;
+    private const uint MatchmakingGC2ClientHello = 9110;
     private const uint PremierRankTypeId = 11;
     private const uint CsClientVersion = 2_000_244;
+
+    // 9110 不会在首次 GC 连接时可靠下发，需要“断开 GC 再重连”循环触发（与 cooldown.js 一致：6 轮、
+    // 每轮等 11 秒、断开后 2.5 秒再重连），另设总时限兜底防止单轮 GC welcome 重试拖长整体耗时。
+    private const int MaxHelloCycles = 6;
+    private static readonly TimeSpan HelloWaitTimeout = TimeSpan.FromSeconds(11);
+    private static readonly TimeSpan GcReconnectDelay = TimeSpan.FromSeconds(2.5);
+    private static readonly TimeSpan HelloTotalBudget = TimeSpan.FromSeconds(100);
 
     private static readonly HttpClient HttpClient = new()
     {
@@ -37,6 +46,16 @@ internal sealed class CsPremierScoreService
             await cmClient.SetGamesPlayedAsync([Cs2AppId], cancellationToken);
             await ConnectToGameCoordinatorAsync(cmClient, cancellationToken);
 
+            // 冷却/VAC 只能从 GC 的 MatchmakingGC2ClientHello(9110) 拿：PlayersProfile 对自己
+            // 账号的 penalty 字段永远为空。先挂 9110 等待（welcome 后 GC 可能主动下发），再发
+            // 9109 请求，随后照常请求 PlayersProfile 取优先分/等级。
+            var helloTask = WaitForMatchmakingHelloAsync(cmClient, cancellationToken);
+            await cmClient.SendGcProtobufMessageAsync(
+                Cs2AppId,
+                MatchmakingClient2GCHello,
+                [],
+                cancellationToken);
+
             var profileTask = cmClient.WaitForGcMessageAsync(
                 Cs2AppId,
                 PlayersProfile,
@@ -50,7 +69,52 @@ internal sealed class CsPremierScoreService
                 cancellationToken);
 
             var profileMessage = await profileTask;
-            return DecodePlayersProfile(steamId, accountId, profileMessage.Payload);
+            var profile = DecodePlayersProfile(accountId, profileMessage.Payload);
+
+            var helloData = await helloTask;
+            var helloDeadline = DateTimeOffset.UtcNow + HelloTotalBudget;
+
+            for (var cycle = 2;
+                helloData is null && cycle <= MaxHelloCycles && DateTimeOffset.UtcNow < helloDeadline;
+                cycle++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                try
+                {
+                    await cmClient.SetGamesPlayedAsync([], cancellationToken);
+                    await Task.Delay(GcReconnectDelay, cancellationToken);
+                    await cmClient.SetGamesPlayedAsync([Cs2AppId], cancellationToken);
+                    await ConnectToGameCoordinatorAsync(cmClient, cancellationToken);
+                }
+                catch (TimeoutException)
+                {
+                    // GC 重连失败：优先分已拿到，冷却按未知返回。
+                    break;
+                }
+
+                helloTask = WaitForMatchmakingHelloAsync(cmClient, cancellationToken);
+                await cmClient.SendGcProtobufMessageAsync(
+                    Cs2AppId,
+                    MatchmakingClient2GCHello,
+                    [],
+                    cancellationToken);
+                helloData = await helloTask;
+            }
+
+            var premier = profile.Rankings.FirstOrDefault(ranking =>
+                ranking.RankTypeId == PremierRankTypeId);
+
+            return new CsPremierScoreResult(
+                steamId,
+                accountId,
+                premier,
+                profile.Rankings,
+                helloData?.PenaltySeconds,
+                helloData?.PenaltyReason,
+                helloData?.VacBanned,
+                profile.PlayerLevel,
+                profile.InMatch);
         }
         finally
         {
@@ -62,6 +126,27 @@ internal sealed class CsPremierScoreService
             {
                 // Best-effort cleanup before logoff.
             }
+        }
+    }
+
+    /// <summary>等待一轮 9110；超时返回 null（由调用方断开 GC 重连再试）。9110 与 PlayersProfile
+    /// 的账号条目是同一个 proto 消息类型，直接复用 DecodeAccountProfile。</summary>
+    private static async Task<CsAccountProfile?> WaitForMatchmakingHelloAsync(
+        SteamCmClient cmClient,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var message = await cmClient.WaitForGcMessageAsync(
+                Cs2AppId,
+                MatchmakingGC2ClientHello,
+                HelloWaitTimeout,
+                cancellationToken);
+            return DecodeAccountProfile(message.Payload);
+        }
+        catch (TimeoutException)
+        {
+            return null;
         }
     }
 
@@ -121,10 +206,7 @@ internal sealed class CsPremierScoreService
         });
     }
 
-    private static CsPremierScoreResult DecodePlayersProfile(
-        string steamId,
-        uint requestedAccountId,
-        byte[] body)
+    private static CsAccountProfile DecodePlayersProfile(uint requestedAccountId, byte[] body)
     {
         var profiles = new List<CsAccountProfile>();
         var reader = new SteamProtoReader(body);
@@ -151,19 +233,7 @@ internal sealed class CsPremierScoreService
             throw new InvalidOperationException("CS2 GC 没有返回账号 Profile。");
         }
 
-        var premier = profile.Rankings.FirstOrDefault(ranking =>
-            ranking.RankTypeId == PremierRankTypeId);
-
-        return new CsPremierScoreResult(
-            steamId,
-            requestedAccountId,
-            premier,
-            profile.Rankings,
-            profile.PenaltySeconds,
-            profile.PenaltyReason,
-            profile.VacBanned,
-            profile.PlayerLevel,
-            profile.InMatch);
+        return profile;
     }
 
     private static CsAccountProfile DecodeAccountProfile(byte[] body)

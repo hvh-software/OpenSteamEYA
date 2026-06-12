@@ -1,13 +1,15 @@
 namespace SteamEyaWinUI.Models;
 
+// 冷却三字段（PenaltySeconds/PenaltyReason/VacBanned）来自 GC 的 MatchmakingGC2ClientHello(9110)，
+// null 表示 9110 未下发（冷却状态未知），与“确认无冷却”(0) 严格区分。
 public sealed record CsPremierScoreResult(
     string SteamId,
     uint AccountId,
     CsRankingInfo? PremierRanking,
     IReadOnlyList<CsRankingInfo> Rankings,
-    uint PenaltySeconds,
-    uint PenaltyReason,
-    int VacBanned,
+    uint? PenaltySeconds,
+    uint? PenaltyReason,
+    int? VacBanned,
     int? PlayerLevel,
     bool InMatch)
 {
@@ -15,19 +17,32 @@ public sealed record CsPremierScoreResult(
 
     public bool HasPremierScore => PremierRanking is not null && PremierRanking.RankId > 0;
 
-    public bool HasCooldown => PenaltySeconds > 0;
+    public bool HasCooldownData => PenaltySeconds.HasValue;
 
-    public bool IsGcVacBanned => VacBanned != 0;
+    public bool HasCooldown => PenaltySeconds is > 0;
+
+    public bool IsGcVacBanned => VacBanned is not (null or 0);
+
+    /// <summary>写入历史记录用：未知保持 null，不能折叠成“无标记”。</summary>
+    public bool? GcVacBannedOrUnknown => VacBanned is null ? null : VacBanned != 0;
 
     public string DisplayText => HasPremierScore
         ? $"{PremierRanking!.RankId:N0}（胜场 {PremierRanking.Wins}）"
         : "暂无优先分";
 
-    public string CooldownText => HasCooldown
-        ? $"{FormatDuration(PenaltySeconds)}（原因 {PenaltyReason}）"
-        : "无";
+    public string CooldownText => PenaltySeconds switch
+    {
+        null => "未知（GC 未响应）",
+        0 => "无",
+        _ => $"{FormatDuration(PenaltySeconds.Value)}（原因 {PenaltyReason ?? 0}）"
+    };
 
-    public string GcVacText => IsGcVacBanned ? "有标记" : "无";
+    public string GcVacText => VacBanned switch
+    {
+        null => "未知",
+        0 => "无",
+        _ => "有标记"
+    };
 
     public string CooldownStatusText => $"冷却：{CooldownText}；GC VAC：{GcVacText}";
 
@@ -66,9 +81,14 @@ public sealed record CsPremierScoreResult(
                 restrictions.Add($"{kind}：{CooldownText}");
             }
 
-            return restrictions.Count == 0
+            if (restrictions.Count > 0)
+            {
+                return string.Join("；", restrictions);
+            }
+
+            return HasCooldownData
                 ? "未发现 CS2 限制"
-                : string.Join("；", restrictions);
+                : "冷却状态未知（GC 未响应，可稍后重试）";
         }
     }
 

@@ -8,12 +8,34 @@ internal sealed class SteamPathService
 {
     public SteamPaths GetSteamPaths()
     {
-        var installPath =
-            GetInstallPathFromRegistry() ??
-            GetInstallPathFromRunningProcess() ??
-            GetInstallPathFromProtocolRegistry();
+        string? installPath = null;
+        string? firstExistingPath = null;
 
-        if (string.IsNullOrWhiteSpace(installPath) || !Directory.Exists(installPath))
+        foreach (var candidate in EnumerateInstallPathCandidates())
+        {
+            if (string.IsNullOrWhiteSpace(candidate))
+            {
+                continue;
+            }
+
+            var directory = candidate.Trim().TrimEnd('\\', '/');
+            if (!Directory.Exists(directory))
+            {
+                continue;
+            }
+
+            firstExistingPath ??= directory;
+
+            // 优先选真正含 steam.exe 的目录，避免命中搬迁/重装后残留的空目录。
+            if (File.Exists(Path.Combine(directory, "steam.exe")))
+            {
+                installPath = directory;
+                break;
+            }
+        }
+
+        installPath ??= firstExistingPath;
+        if (string.IsNullOrWhiteSpace(installPath))
         {
             throw new InvalidOperationException("没有找到 Steam 安装目录。");
         }
@@ -30,18 +52,49 @@ internal sealed class SteamPathService
             Path.Combine(installPath, "config"));
     }
 
-    private static string? GetInstallPathFromRegistry()
+    // 候选顺序对齐 SteamEYA_GUI.exe，并补全它没覆盖到但更可靠的来源。
+    // HKCU\Software\Valve\Steam\SteamPath 是 Steam 自己每次启动都会写的权威值，
+    // 原实现完全没读它，导致 HKLM InstallPath 缺失/过期的用户（免管理员安装、
+    // 搬盘后注册表未更新、机器级协议注册在 HKLM 而非 HKCU）找不到 Steam。
+    private static IEnumerable<string?> EnumerateInstallPathCandidates()
     {
-        return ReadRegistryString(
-                RegistryHive.LocalMachine,
-                RegistryView.Registry64,
-                @"SOFTWARE\WOW6432Node\Valve\Steam",
-                "InstallPath") ??
-            ReadRegistryString(
-                RegistryHive.LocalMachine,
-                RegistryView.Registry32,
-                @"SOFTWARE\Valve\Steam",
-                "InstallPath");
+        yield return ReadRegistryString(
+            RegistryHive.CurrentUser,
+            RegistryView.Default,
+            @"Software\Valve\Steam",
+            "SteamPath");
+
+        var steamExe = ReadRegistryString(
+            RegistryHive.CurrentUser,
+            RegistryView.Default,
+            @"Software\Valve\Steam",
+            "SteamExe");
+        yield return string.IsNullOrWhiteSpace(steamExe) ? null : Path.GetDirectoryName(steamExe);
+
+        yield return GetDefaultInstallPath("ProgramFiles(x86)");
+        yield return GetDefaultInstallPath("ProgramFiles");
+
+        yield return ReadRegistryString(
+            RegistryHive.LocalMachine,
+            RegistryView.Registry64,
+            @"SOFTWARE\WOW6432Node\Valve\Steam",
+            "InstallPath");
+        yield return ReadRegistryString(
+            RegistryHive.LocalMachine,
+            RegistryView.Registry32,
+            @"SOFTWARE\Valve\Steam",
+            "InstallPath");
+
+        yield return GetInstallPathFromRunningProcess();
+
+        yield return GetInstallPathFromProtocolRegistry(RegistryHive.CurrentUser);
+        yield return GetInstallPathFromProtocolRegistry(RegistryHive.LocalMachine);
+    }
+
+    private static string? GetDefaultInstallPath(string environmentVariable)
+    {
+        var root = Environment.GetEnvironmentVariable(environmentVariable);
+        return string.IsNullOrWhiteSpace(root) ? null : Path.Combine(root, "Steam");
     }
 
     private static string? GetInstallPathFromRunningProcess()
@@ -62,7 +115,7 @@ internal sealed class SteamPathService
                     }
                     catch
                     {
-                        // Some processes deny MainModule access; registry lookup usually covers this.
+                        // Some processes deny MainModule access; other candidates usually cover this.
                     }
                 }
             }
@@ -71,10 +124,10 @@ internal sealed class SteamPathService
         return null;
     }
 
-    private static string? GetInstallPathFromProtocolRegistry()
+    private static string? GetInstallPathFromProtocolRegistry(RegistryHive hive)
     {
         var command = ReadRegistryString(
-            RegistryHive.CurrentUser,
+            hive,
             RegistryView.Default,
             @"Software\Classes\steam\Shell\Open\Command",
             "");

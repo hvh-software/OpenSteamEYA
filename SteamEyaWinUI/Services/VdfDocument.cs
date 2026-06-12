@@ -23,6 +23,20 @@ internal static class VdfDocument
         }
     }
 
+    // 登录写盘用：解析失败不应中止上号。参考 SteamEYA_GUI.exe 的做法——
+    // 解析不了就当作空文档继续（最坏只是重新生成该文件），而不是整个流程抛异常。
+    public static Dictionary<string, object> LoadOrEmpty(string path)
+    {
+        try
+        {
+            return Load(path);
+        }
+        catch
+        {
+            return new Dictionary<string, object>(StringComparer.Ordinal);
+        }
+    }
+
     public static void Save(string path, Dictionary<string, object> document)
     {
         var directory = Path.GetDirectoryName(path);
@@ -172,6 +186,24 @@ internal static class VdfDocument
                     continue;
                 }
 
+                // Valve 条件标记（如 "key" "value" [$WIN32]）：整段跳过，按无条件处理，
+                // 否则会被当成下一个键、导致结构解析失败而中止上号。
+                if (current == '[')
+                {
+                    index++;
+                    while (index < text.Length && text[index] != ']')
+                    {
+                        index++;
+                    }
+
+                    if (index < text.Length)
+                    {
+                        index++;
+                    }
+
+                    continue;
+                }
+
                 if (current == '"')
                 {
                     tokens.Add(ReadQuoted(text, ref index));
@@ -221,7 +253,7 @@ internal static class VdfDocument
             var start = index;
             while (index < text.Length &&
                 !char.IsWhiteSpace(text[index]) &&
-                text[index] is not '{' and not '}')
+                text[index] is not '{' and not '}' and not '[' and not ']')
             {
                 index++;
             }

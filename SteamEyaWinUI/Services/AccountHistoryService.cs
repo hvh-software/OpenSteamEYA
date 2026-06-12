@@ -174,13 +174,186 @@ internal sealed class AccountHistoryService
         item.PremierScoreUpdatedAt = DateTimeOffset.Now;
         item.CooldownSeconds = score.PenaltySeconds;
         item.CooldownReason = score.PenaltyReason;
-        item.GcVacBanned = score.IsGcVacBanned;
+        item.GcVacBanned = score.GcVacBannedOrUnknown;
         item.CsPlayerLevel = score.PlayerLevel;
         item.InCsMatch = score.InMatch;
         item.CsStatusUpdatedAt = DateTimeOffset.Now;
 
         document.Accounts = NormalizeAccounts(document.Accounts).ToList();
         WriteDocument(document);
+    }
+
+    /// <summary>合并导入账号（按 SteamID/账户名去重覆盖），导入不更新“上次登录”。</summary>
+    public (int Added, int Updated) ImportAccounts(IReadOnlyList<AccountImportEntry> entries)
+    {
+        var document = ReadDocument();
+        var added = 0;
+        var updated = 0;
+
+        foreach (var entry in entries)
+        {
+            var accountName = entry.AccountName.Trim();
+            var steamId = entry.SteamId.Trim();
+            var eyaToken = entry.EyaToken.Trim();
+            if (string.IsNullOrWhiteSpace(accountName) || string.IsNullOrWhiteSpace(eyaToken))
+            {
+                continue;
+            }
+
+            var item = FindExisting(document.Accounts, steamId, accountName);
+            if (item is null)
+            {
+                item = new SteamAccountHistoryItem();
+                document.Accounts.Add(item);
+                added++;
+            }
+            else
+            {
+                updated++;
+            }
+
+            item.AccountName = accountName;
+            item.SteamId = steamId;
+            item.EyaToken = eyaToken;
+            item.TokenExpiresAt = entry.TokenExpiresAt;
+        }
+
+        document.Accounts = NormalizeAccounts(document.Accounts).ToList();
+        WriteDocument(document);
+        return (added, updated);
+    }
+
+    /// <summary>批量补全昵称与头像（网络失败逐个忽略），返回成功更新的账号数。</summary>
+    public async Task<int> RefreshProfilesAsync(IReadOnlyCollection<string> steamIds)
+    {
+        var distinctIds = steamIds
+            .Where(steamId => !string.IsNullOrWhiteSpace(steamId))
+            .Select(steamId => steamId.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (distinctIds.Count == 0)
+        {
+            return 0;
+        }
+
+        var results = await Task.WhenAll(distinctIds.Select(async steamId =>
+        {
+            var profile = await TryGetSteamProfileAsync(steamId);
+            var avatarPath = !string.IsNullOrWhiteSpace(profile?.AvatarUrl)
+                ? await TryDownloadAvatarAsync(steamId, steamId, profile.AvatarUrl)
+                : null;
+            return (SteamId: steamId, Profile: profile, AvatarPath: avatarPath);
+        }));
+
+        var document = ReadDocument();
+        var updatedCount = 0;
+        foreach (var (steamId, profile, avatarPath) in results)
+        {
+            if (profile is null)
+            {
+                continue;
+            }
+
+            var item = document.Accounts.FirstOrDefault(account =>
+                string.Equals(account.SteamId, steamId, StringComparison.OrdinalIgnoreCase));
+            if (item is null)
+            {
+                continue;
+            }
+
+            if (!string.IsNullOrWhiteSpace(profile.PersonaName))
+            {
+                item.PersonaName = profile.PersonaName;
+            }
+
+            if (!string.IsNullOrWhiteSpace(profile.AvatarUrl))
+            {
+                item.AvatarUrl = profile.AvatarUrl;
+                item.AvatarPath = avatarPath ?? item.AvatarPath;
+            }
+
+            updatedCount++;
+        }
+
+        if (updatedCount > 0)
+        {
+            document.Accounts = NormalizeAccounts(document.Accounts).ToList();
+            WriteDocument(document);
+        }
+
+        return updatedCount;
+    }
+
+    /// <summary>删除指定账号（含本地头像缓存），返回实际移除的条数。</summary>
+    public int DeleteAccounts(IReadOnlyCollection<SteamAccountHistoryItem> accounts)
+    {
+        if (accounts.Count == 0)
+        {
+            return 0;
+        }
+
+        var keys = accounts.Select(GetAccountKey).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var document = ReadDocument();
+        var removed = document.Accounts.RemoveAll(account => keys.Contains(GetAccountKey(account)));
+        document.Accounts = NormalizeAccounts(document.Accounts).ToList();
+        WriteDocument(document);
+
+        foreach (var account in accounts)
+        {
+            TryDeleteFile(account.AvatarPath);
+        }
+
+        return removed;
+    }
+
+    /// <summary>清空全部历史账号与头像缓存，返回清空前的账号数。</summary>
+    public int ClearAll()
+    {
+        var document = ReadDocument();
+        var count = NormalizeAccounts(document.Accounts).Count;
+        WriteDocument(new AccountHistoryDocument());
+
+        try
+        {
+            if (Directory.Exists(AvatarFolderPath))
+            {
+                foreach (var file in Directory.EnumerateFiles(AvatarFolderPath))
+                {
+                    TryDeleteFile(file);
+                }
+            }
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+
+        return count;
+    }
+
+    private static void TryDeleteFile(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        try
+        {
+            // 头像可能正被界面上的 BitmapImage 占用，删不掉就留着，不影响记录删除。
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
     }
 
     private AccountHistoryDocument ReadDocument()

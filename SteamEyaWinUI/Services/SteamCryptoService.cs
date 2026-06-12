@@ -7,7 +7,6 @@ namespace SteamEyaWinUI.Services;
 internal sealed class SteamCryptoService
 {
     private const int CryptprotectUiForbidden = 0x1;
-    private const int CryptprotectAudit = 0x10;
 
     public string EncryptToHex(string token, string accountName)
     {
@@ -18,7 +17,8 @@ internal sealed class SteamCryptoService
 
         try
         {
-            var flags = CryptprotectUiForbidden | CryptprotectAudit;
+            // 对齐 SteamEYA_GUI.exe：仅 CRYPTPROTECT_UI_FORBIDDEN（不加 AUDIT）。
+            var flags = CryptprotectUiForbidden;
             if (!CryptProtectData(
                     ref dataBlob,
                     "BObfuscateBuffer",

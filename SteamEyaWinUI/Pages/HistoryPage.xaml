@@ -53,12 +53,78 @@
                 <ColumnDefinition Width="360" />
             </Grid.ColumnDefinitions>
 
-            <Grid>
+            <Grid RowSpacing="12">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <Grid ColumnSpacing="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <Button
+                        x:Name="ImportHistoryButton"
+                        Click="ImportHistoryButton_Click"
+                        ToolTipService.ToolTip="从剪贴板读取“账户名----令牌”列表，可勾选要导入的账号">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon Glyph="&#xE77F;" FontSize="16" />
+                            <TextBlock Text="导入" />
+                        </StackPanel>
+                    </Button>
+
+                    <Button
+                        x:Name="ExportHistoryButton"
+                        Grid.Column="1"
+                        Click="ExportHistoryButton_Click"
+                        ToolTipService.ToolTip="将选中账号以“账户名----令牌”格式复制到剪贴板">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon Glyph="&#xE8C8;" FontSize="16" />
+                            <TextBlock Text="导出" />
+                        </StackPanel>
+                    </Button>
+
+                    <Button
+                        x:Name="DeleteHistoryButton"
+                        Grid.Column="2"
+                        Click="DeleteHistoryButton_Click"
+                        ToolTipService.ToolTip="删除选中的历史账号">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon Glyph="&#xE74D;" FontSize="16" />
+                            <TextBlock Text="删除" />
+                        </StackPanel>
+                    </Button>
+
+                    <Button
+                        x:Name="ClearHistoryButton"
+                        Grid.Column="3"
+                        Click="ClearHistoryButton_Click"
+                        ToolTipService.ToolTip="清空全部历史账号">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon Glyph="&#xE75C;" FontSize="16" />
+                            <TextBlock Text="清空" />
+                        </StackPanel>
+                    </Button>
+
+                    <TextBlock
+                        x:Name="SelectionHintText"
+                        Grid.Column="4"
+                        VerticalAlignment="Center"
+                        HorizontalAlignment="Right"
+                        Style="{StaticResource CaptionTextBlockStyle}"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Text="Ctrl/Shift 可多选" />
+                </Grid>
+
                 <ListView
                     x:Name="HistoryAccountList"
-                    SelectionMode="Single"
-                    IsItemClickEnabled="True"
-                    ItemClick="HistoryAccountList_ItemClick"
+                    Grid.Row="1"
+                    SelectionMode="Extended"
                     SelectionChanged="HistoryAccountList_SelectionChanged">
                     <ListView.ItemContainerStyle>
                         <Style TargetType="ListViewItem">
@@ -139,6 +205,7 @@
 
                 <StackPanel
                     x:Name="HistoryEmptyPanel"
+                    Grid.Row="1"
                     Spacing="12"
                     HorizontalAlignment="Center"
                     VerticalAlignment="Center"
@@ -285,5 +352,40 @@
                 </Border>
             </ScrollViewer>
         </Grid>
+
+        <ContentDialog
+            x:Name="ImportDialog"
+            Title="导入历史账号"
+            PrimaryButtonText="导入选中"
+            CloseButtonText="取消"
+            DefaultButton="Primary">
+            <StackPanel Spacing="12" MinWidth="400">
+                <TextBlock
+                    x:Name="ImportDialogSummaryText"
+                    TextWrapping="Wrap"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <ListView
+                    x:Name="ImportDialogList"
+                    MaxHeight="320"
+                    SelectionMode="Multiple"
+                    SelectionChanged="ImportDialogList_SelectionChanged">
+                    <ListView.ItemTemplate>
+                        <DataTemplate x:DataType="models:AccountImportEntry">
+                            <StackPanel Spacing="2" Padding="0,6">
+                                <TextBlock Text="{x:Bind AccountName}" FontWeight="SemiBold" />
+                                <TextBlock
+                                    Text="{x:Bind SummaryText}"
+                                    Style="{StaticResource CaptionTextBlockStyle}"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock
+                                    Text="{x:Bind TokenSummaryText}"
+                                    Style="{StaticResource CaptionTextBlockStyle}"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+            </StackPanel>
+        </ContentDialog>
     </Grid>
 </Page>
