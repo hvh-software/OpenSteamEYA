@@ -1,0 +1,256 @@
+<Page
+    x:Class="SteamEyaWinUI.Pages.CachedAccountsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:models="using:SteamEyaWinUI.Models"
+    NavigationCacheMode="Required">
+
+    <Grid Padding="32,24,32,16" RowSpacing="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Spacing="4">
+                <TextBlock Text="已缓存账号" Style="{StaticResource PageTitleTextStyle}" />
+                <TextBlock
+                    x:Name="CachedSummaryText"
+                    Text="使用 EYA 登录前检测到的原 Steam 登录账号会记录在这里。"
+                    Style="{StaticResource PageSubtitleTextStyle}" />
+            </StackPanel>
+
+            <AutoSuggestBox
+                x:Name="CachedSearchBox"
+                Grid.Column="1"
+                Width="240"
+                VerticalAlignment="Center"
+                PlaceholderText="搜索账号名 / 昵称 / Steam64"
+                QueryIcon="Find"
+                TextChanged="CachedSearchBox_TextChanged" />
+
+            <Button
+                x:Name="RefreshCachedButton"
+                Grid.Column="2"
+                VerticalAlignment="Center"
+                Click="RefreshCachedButton_Click">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <FontIcon Glyph="&#xE72C;" FontSize="16" />
+                    <TextBlock Text="刷新" />
+                </StackPanel>
+            </Button>
+        </Grid>
+
+        <Grid Grid.Row="1" ColumnSpacing="20">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="340" />
+            </Grid.ColumnDefinitions>
+
+            <Grid RowSpacing="12">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <Grid ColumnSpacing="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <Button
+                        x:Name="DeleteCachedButton"
+                        Click="DeleteCachedButton_Click">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon Glyph="&#xE74D;" FontSize="16" />
+                            <TextBlock Text="删除" />
+                        </StackPanel>
+                    </Button>
+
+                    <Button
+                        x:Name="ClearCachedButton"
+                        Grid.Column="1"
+                        Click="ClearCachedButton_Click">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon Glyph="&#xE75C;" FontSize="16" />
+                            <TextBlock Text="清空" />
+                        </StackPanel>
+                    </Button>
+
+                    <TextBlock
+                        x:Name="CachedSelectionHintText"
+                        Grid.Column="2"
+                        VerticalAlignment="Center"
+                        HorizontalAlignment="Right"
+                        Style="{StaticResource CaptionTextBlockStyle}"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Text="Ctrl/Shift 可多选" />
+                </Grid>
+
+                <ListView
+                    x:Name="CachedAccountList"
+                    Grid.Row="1"
+                    SelectionMode="Extended"
+                    SelectionChanged="CachedAccountList_SelectionChanged">
+                    <ListView.ItemContainerStyle>
+                        <Style TargetType="ListViewItem">
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                            <Setter Property="Padding" Value="0" />
+                            <Setter Property="Margin" Value="0,0,0,8" />
+                            <Setter Property="CornerRadius" Value="{ThemeResource OverlayCornerRadius}" />
+                        </Style>
+                    </ListView.ItemContainerStyle>
+
+                    <ListView.ItemTemplate>
+                        <DataTemplate x:DataType="models:CachedSteamLoginAccount">
+                            <Border
+                                Padding="14"
+                                CornerRadius="{ThemeResource OverlayCornerRadius}"
+                                BorderThickness="1"
+                                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}">
+                                <Grid MinHeight="64" ColumnSpacing="14">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <PersonPicture
+                                        Width="52"
+                                        Height="52"
+                                        VerticalAlignment="Center"
+                                        DisplayName="{x:Bind AccountTitle}"
+                                        ProfilePicture="{x:Bind AvatarImage}" />
+
+                                    <StackPanel
+                                        Grid.Column="1"
+                                        Spacing="4"
+                                        VerticalAlignment="Center">
+                                        <TextBlock
+                                            Text="{x:Bind AccountTitle}"
+                                            FontSize="15"
+                                            FontWeight="SemiBold"
+                                            TextTrimming="CharacterEllipsis" />
+                                        <TextBlock
+                                            Text="{x:Bind PersonaDisplayName}"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            TextTrimming="CharacterEllipsis" />
+                                        <TextBlock
+                                            Text="{x:Bind SteamIdDisplay}"
+                                            Style="{StaticResource CaptionTextBlockStyle}"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+
+                                    <StackPanel
+                                        Grid.Column="2"
+                                        MinWidth="96"
+                                        Spacing="4"
+                                        VerticalAlignment="Center"
+                                        HorizontalAlignment="Right">
+                                        <TextBlock
+                                            Text="缓存时间"
+                                            HorizontalAlignment="Right"
+                                            Style="{StaticResource CaptionTextBlockStyle}"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        <TextBlock
+                                            Text="{x:Bind CachedAtShortText}"
+                                            HorizontalAlignment="Right" />
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+
+                <StackPanel
+                    x:Name="CachedEmptyPanel"
+                    Grid.Row="1"
+                    Spacing="12"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Visibility="Collapsed">
+                    <FontIcon
+                        Glyph="&#xE777;"
+                        FontSize="40"
+                        HorizontalAlignment="Center"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock
+                        x:Name="CachedEmptyText"
+                        Text="暂无缓存账号"
+                        FontSize="16"
+                        HorizontalAlignment="Center"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock
+                        x:Name="CachedEmptyHintText"
+                        Text="先正常登录 Steam，再使用 EYA 登录，原 Steam 账号会自动缓存。"
+                        HorizontalAlignment="Center"
+                        Style="{StaticResource CaptionTextBlockStyle}"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                </StackPanel>
+            </Grid>
+
+            <Border Grid.Column="1" Style="{StaticResource CardBorderStyle}" VerticalAlignment="Top">
+                <StackPanel Spacing="16">
+                    <StackPanel Spacing="8" HorizontalAlignment="Center">
+                        <PersonPicture
+                            x:Name="CachedDetailAvatar"
+                            Width="92"
+                            Height="92"
+                            DisplayName="未选择" />
+                        <TextBlock
+                            Text="账号详情"
+                            HorizontalAlignment="Center"
+                            Style="{StaticResource SectionTitleTextStyle}" />
+                        <TextBlock
+                            x:Name="CachedDetailAccountNameText"
+                            Text="未选择账号"
+                            FontSize="20"
+                            FontWeight="SemiBold"
+                            HorizontalAlignment="Center"
+                            TextWrapping="Wrap" />
+                        <TextBlock
+                            x:Name="CachedDetailPersonaText"
+                            Text="Steam 资料未同步"
+                            HorizontalAlignment="Center"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            TextWrapping="Wrap" />
+                        <TextBlock
+                            x:Name="CachedDetailSteamIdText"
+                            Text="Steam64 未记录"
+                            IsTextSelectionEnabled="True"
+                            HorizontalAlignment="Center"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            TextWrapping="Wrap" />
+                        <TextBlock
+                            x:Name="CachedDetailTimeText"
+                            Text="暂无缓存时间"
+                            HorizontalAlignment="Center"
+                            Style="{StaticResource CaptionTextBlockStyle}"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    </StackPanel>
+
+                    <Button
+                        x:Name="RestoreSelectedCachedButton"
+                        HorizontalAlignment="Stretch"
+                        Style="{StaticResource AccentButtonStyle}"
+                        Click="RestoreSelectedCachedButton_Click">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon Glyph="&#xE777;" FontSize="16" />
+                            <TextBlock Text="恢复该账号登录" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </Border>
+        </Grid>
+    </Grid>
+</Page>

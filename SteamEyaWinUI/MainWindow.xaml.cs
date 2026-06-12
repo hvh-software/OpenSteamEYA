@@ -75,6 +75,7 @@ public sealed partial class MainWindow : Window
         var pageType = pageName switch
         {
             "history" => typeof(HistoryPage),
+            "cachedAccounts" => typeof(CachedAccountsPage),
             "about" => typeof(AboutPage),
             _ => typeof(LoginPage)
         };

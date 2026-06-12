@@ -9,6 +9,8 @@ internal sealed class SteamLoginService
     private readonly SteamCryptoService _steamCryptoService = new();
     private readonly SteamConfigService _steamConfigService = new();
     private readonly SteamProcessService _steamProcessService = new();
+    private readonly SteamLoginCacheService _loginCacheService = new();
+    private readonly AccountHistoryService _accountHistoryService = new();
 
     public LoginResult Login(string accountName, string eyaToken, IProgress<string>? progress = null)
     {
@@ -22,6 +24,7 @@ internal sealed class SteamLoginService
 
             progress?.Report("正在定位 Steam 安装目录...");
             var paths = _steamPathService.GetSteamPaths();
+            var cachedAccountCandidates = _steamConfigService.GetLoginAccounts(paths);
 
             progress?.Report("正在加密 EYA 令牌...");
             var encryptedJwt = _steamCryptoService.EncryptToHex(eyaToken, accountName);
@@ -31,6 +34,12 @@ internal sealed class SteamLoginService
             _steamProcessService.EnsureSteamStopped(paths, progress);
 
             progress?.Report("正在写入 Steam 登录配置...");
+            if (cachedAccountCandidates.Count == 0)
+            {
+                cachedAccountCandidates = _steamConfigService.GetLoginAccounts(paths);
+            }
+
+            CacheLoginAccounts(cachedAccountCandidates, accountName, token.SteamId, progress);
             _steamConfigService.UpdateLoginFiles(
                 paths,
                 accountName,
@@ -48,6 +57,122 @@ internal sealed class SteamLoginService
         {
             AppLog.Error("上号流程失败。", ex);
             throw;
+        }
+    }
+
+    public CachedSteamLoginAccount? GetCachedLoginAccount()
+    {
+        return _loginCacheService.Load();
+    }
+
+    public IReadOnlyList<CachedSteamLoginAccount> GetCachedLoginAccounts()
+    {
+        return _loginCacheService.LoadAll();
+    }
+
+    public CachedSteamLoginAccount RestoreCachedLogin(IProgress<string>? progress = null)
+    {
+        var account = _loginCacheService.Load()
+            ?? throw new InvalidOperationException("没有可恢复的缓存 Steam 账号。");
+
+        return RestoreCachedLogin(account, progress);
+    }
+
+    public CachedSteamLoginAccount RestoreCachedLogin(
+        CachedSteamLoginAccount account,
+        IProgress<string>? progress = null)
+    {
+        AppLog.Info("==== 开始恢复缓存 Steam 账号 ====");
+
+        try
+        {
+            progress?.Report("正在定位 Steam 安装目录...");
+            var paths = _steamPathService.GetSteamPaths();
+
+            _steamProcessService.EnsureSteamStopped(paths, progress);
+
+            progress?.Report("正在恢复 Steam 登录配置...");
+            _steamConfigService.RestoreLoginFiles(paths, account);
+
+            progress?.Report("正在启动 Steam...");
+            _steamProcessService.LaunchSteamWithLogin(paths, account.AccountName);
+
+            AppLog.Info($"==== 已请求恢复缓存账号：{account.AccountName} ({account.SteamId}) ====");
+            return account;
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("恢复缓存 Steam 账号失败。", ex);
+            throw;
+        }
+    }
+
+    public int DeleteCachedLoginAccounts(IReadOnlyCollection<CachedSteamLoginAccount> accounts)
+    {
+        return _loginCacheService.Delete(accounts);
+    }
+
+    public int ClearCachedLoginAccounts()
+    {
+        return _loginCacheService.ClearAll();
+    }
+
+    public Task<int> RefreshCachedLoginProfilesAsync(IReadOnlyCollection<CachedSteamLoginAccount> accounts)
+    {
+        return _loginCacheService.RefreshProfilesAsync(accounts);
+    }
+
+    private void CacheLoginAccounts(
+        IReadOnlyList<CachedSteamLoginAccount> accounts,
+        string nextAccountName,
+        string nextSteamId,
+        IProgress<string>? progress)
+    {
+        var filtered = accounts
+            .Where(account =>
+                !string.Equals(account.AccountName, nextAccountName, StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(account.SteamId, nextSteamId, StringComparison.OrdinalIgnoreCase) &&
+                !IsKnownEyaAccount(account))
+            .ToList();
+
+        if (filtered.Count == 0)
+        {
+            return;
+        }
+
+        var saved = _loginCacheService.SaveMany(filtered);
+        AppLog.Info($"Cached {saved.Count} non-EYA Steam account(s) for restore.");
+
+        StartCachedProfileRefresh(saved);
+    }
+
+    private void StartCachedProfileRefresh(IReadOnlyCollection<CachedSteamLoginAccount> accounts)
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var updated = await _loginCacheService.RefreshProfilesAsync(accounts);
+                AppLog.Info($"Updated cached Steam profile data for {updated} account(s).");
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn($"同步缓存账号头像失败：{ex.Message}");
+            }
+        });
+    }
+
+    private bool IsKnownEyaAccount(CachedSteamLoginAccount account)
+    {
+        try
+        {
+            return _accountHistoryService.Load().Any(historyAccount =>
+                string.Equals(historyAccount.SteamId, account.SteamId, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(historyAccount.AccountName, account.AccountName, StringComparison.OrdinalIgnoreCase));
+        }
+        catch
+        {
+            return false;
         }
     }
 }

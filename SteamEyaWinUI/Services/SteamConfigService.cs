@@ -1,9 +1,176 @@
+using System.Globalization;
+using Microsoft.Win32;
 using SteamEyaWinUI.Models;
 
 namespace SteamEyaWinUI.Services;
 
 internal sealed class SteamConfigService
 {
+    public CachedSteamLoginAccount? GetCurrentLoginAccount(SteamPaths paths)
+    {
+        var loginUsersPath = Path.Combine(paths.ConfigPath, "loginusers.vdf");
+        var loginUsers = VdfDocument.LoadOrEmpty(loginUsersPath);
+
+        return GetActiveLoginAccount(paths, loginUsers) ??
+            GetMostRecentLoginAccount(loginUsers);
+    }
+
+    public IReadOnlyList<CachedSteamLoginAccount> GetLoginAccounts(SteamPaths paths)
+    {
+        var loginUsersPath = Path.Combine(paths.ConfigPath, "loginusers.vdf");
+        var loginUsers = VdfDocument.LoadOrEmpty(loginUsersPath);
+        var accounts = new List<CachedSteamLoginAccount>();
+
+        var activeAccount = GetActiveLoginAccount(paths, loginUsers);
+        if (activeAccount is not null)
+        {
+            accounts.Add(activeAccount);
+        }
+
+        accounts.AddRange(GetLoginUsersAccounts(loginUsers));
+        accounts.AddRange(GetConfigAccounts(Path.Combine(paths.ConfigPath, "config.vdf")));
+        return NormalizeLoginAccounts(accounts);
+    }
+
+    private static CachedSteamLoginAccount? GetActiveLoginAccount(
+        SteamPaths paths,
+        Dictionary<string, object> loginUsers)
+    {
+        var accountId = ReadActiveUserAccountId();
+        if (!accountId.HasValue)
+        {
+            return null;
+        }
+
+        var steamId = ToSteam64(accountId.Value);
+        var accountName = FindAccountNameBySteamId(loginUsers, steamId) ??
+            FindAccountNameBySteamId(Path.Combine(paths.ConfigPath, "config.vdf"), steamId) ??
+            ReadSteamRegistryString("AutoLoginUser");
+
+        if (string.IsNullOrWhiteSpace(accountName))
+        {
+            AppLog.Warn($"Found active Steam user {steamId}, but could not resolve its account name.");
+            return null;
+        }
+
+        AppLog.Info($"Found active Steam account for restore: {accountName} ({steamId}).");
+        return new CachedSteamLoginAccount
+        {
+            AccountName = accountName,
+            SteamId = steamId,
+            CachedAt = DateTimeOffset.Now
+        };
+    }
+
+    private static CachedSteamLoginAccount? GetMostRecentLoginAccount(
+        Dictionary<string, object> loginUsers)
+    {
+        if (!TryGetUsers(loginUsers, out var users))
+        {
+            return null;
+        }
+
+        foreach (var (steamId, value) in users)
+        {
+            if (value is not Dictionary<string, object> user ||
+                !IsEnabled(user, "MostRecent"))
+            {
+                continue;
+            }
+
+            var accountName = GetString(user, "AccountName");
+            if (string.IsNullOrWhiteSpace(accountName) || string.IsNullOrWhiteSpace(steamId))
+            {
+                continue;
+            }
+
+            return new CachedSteamLoginAccount
+            {
+                AccountName = accountName,
+                SteamId = steamId,
+                CachedAt = DateTimeOffset.Now
+            };
+        }
+
+        return null;
+    }
+
+    private static IEnumerable<CachedSteamLoginAccount> GetLoginUsersAccounts(
+        Dictionary<string, object> loginUsers)
+    {
+        if (!TryGetUsers(loginUsers, out var users))
+        {
+            yield break;
+        }
+
+        foreach (var (steamId, value) in users)
+        {
+            if (value is not Dictionary<string, object> user)
+            {
+                continue;
+            }
+
+            var accountName = GetString(user, "AccountName");
+            if (string.IsNullOrWhiteSpace(accountName) || string.IsNullOrWhiteSpace(steamId))
+            {
+                continue;
+            }
+
+            yield return new CachedSteamLoginAccount
+            {
+                AccountName = accountName,
+                SteamId = steamId,
+                PersonaName = GetString(user, "PersonaName"),
+                CachedAt = DateTimeOffset.Now
+            };
+        }
+    }
+
+    private static IEnumerable<CachedSteamLoginAccount> GetConfigAccounts(string configPath)
+    {
+        var config = VdfDocument.LoadOrEmpty(configPath);
+        var steam = GetPath(config, "InstallConfigStore", "Software", "Valve", "Steam");
+        if (steam is null ||
+            !steam.TryGetValue("Accounts", out var accountsValue) ||
+            accountsValue is not Dictionary<string, object> accounts)
+        {
+            yield break;
+        }
+
+        foreach (var (accountName, value) in accounts)
+        {
+            if (value is not Dictionary<string, object> account)
+            {
+                continue;
+            }
+
+            var steamId = GetString(account, "SteamID");
+            if (string.IsNullOrWhiteSpace(accountName) || string.IsNullOrWhiteSpace(steamId))
+            {
+                continue;
+            }
+
+            yield return new CachedSteamLoginAccount
+            {
+                AccountName = accountName,
+                SteamId = steamId,
+                CachedAt = DateTimeOffset.Now
+            };
+        }
+    }
+
+    private static IReadOnlyList<CachedSteamLoginAccount> NormalizeLoginAccounts(
+        IEnumerable<CachedSteamLoginAccount> accounts)
+    {
+        return accounts
+            .Where(account =>
+                !string.IsNullOrWhiteSpace(account.AccountName) &&
+                !string.IsNullOrWhiteSpace(account.SteamId))
+            .GroupBy(GetAccountKey, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToList();
+    }
+
     public void UpdateLoginFiles(
         SteamPaths paths,
         string accountName,
@@ -24,6 +191,20 @@ internal sealed class SteamConfigService
 
         UpdateLocalVdf(paths.LocalVdfPath, accountCrc32, encryptedJwt);
         AppLog.Info($"已写入 local.vdf（{FileLength(paths.LocalVdfPath)} 字节）：\"{paths.LocalVdfPath}\"");
+    }
+
+    public void RestoreLoginFiles(SteamPaths paths, CachedSteamLoginAccount account)
+    {
+        Directory.CreateDirectory(paths.ConfigPath);
+
+        var configPath = Path.Combine(paths.ConfigPath, "config.vdf");
+        var loginUsersPath = Path.Combine(paths.ConfigPath, "loginusers.vdf");
+
+        UpdateConfigVdf(configPath, account.AccountName, account.SteamId);
+        AppLog.Info($"Restored config.vdf ({FileLength(configPath)} bytes): \"{configPath}\"");
+
+        RestoreLoginUsersVdf(loginUsersPath, account);
+        AppLog.Info($"Restored loginusers.vdf ({FileLength(loginUsersPath)} bytes): \"{loginUsersPath}\"");
     }
 
     private static long FileLength(string path)
@@ -88,6 +269,31 @@ internal sealed class SteamConfigService
         VdfDocument.Save(path, loginUsers);
     }
 
+    private static void RestoreLoginUsersVdf(string path, CachedSteamLoginAccount account)
+    {
+        var loginUsers = VdfDocument.LoadOrEmpty(path);
+        var users = EnsureObject(loginUsers, "users");
+
+        foreach (var user in users.Values.OfType<Dictionary<string, object>>())
+        {
+            user["MostRecent"] = "0";
+        }
+
+        var restoredUser = EnsureObject(users, account.SteamId);
+        restoredUser["AccountName"] = account.AccountName;
+        restoredUser["PersonaName"] = string.IsNullOrWhiteSpace(GetString(restoredUser, "PersonaName"))
+            ? account.AccountName
+            : restoredUser["PersonaName"];
+        restoredUser["RememberPassword"] = "1";
+        restoredUser["WantsOfflineMode"] = "0";
+        restoredUser["SkipOfflineModeWarning"] = "0";
+        restoredUser["AllowAutoLogin"] = "1";
+        restoredUser["MostRecent"] = "1";
+        restoredUser["Timestamp"] = DateTimeOffset.Now.ToUnixTimeSeconds().ToString();
+
+        VdfDocument.Save(path, loginUsers);
+    }
+
     private static void UpdateLocalVdf(string path, string accountCrc32, string encryptedJwt)
     {
         var local = VdfDocument.LoadOrEmpty(path);
@@ -128,5 +334,141 @@ internal sealed class SteamConfigService
         var created = new Dictionary<string, object>(StringComparer.Ordinal);
         parent[key] = created;
         return created;
+    }
+
+    private static bool TryGetUsers(
+        Dictionary<string, object> loginUsers,
+        out Dictionary<string, object> users)
+    {
+        if (loginUsers.TryGetValue("users", out var value) &&
+            value is Dictionary<string, object> existingUsers)
+        {
+            users = existingUsers;
+            return true;
+        }
+
+        users = [];
+        return false;
+    }
+
+    private static bool IsEnabled(Dictionary<string, object> user, string key)
+    {
+        return string.Equals(GetString(user, key), "1", StringComparison.Ordinal);
+    }
+
+    private static string? GetString(Dictionary<string, object> values, string key)
+    {
+        return values.TryGetValue(key, out var value) ? value?.ToString() : null;
+    }
+
+    private static string GetAccountKey(CachedSteamLoginAccount account)
+    {
+        return string.IsNullOrWhiteSpace(account.SteamId)
+            ? $"name:{account.AccountName}"
+            : $"id:{account.SteamId}";
+    }
+
+    private static uint? ReadActiveUserAccountId()
+    {
+        return ReadSteamRegistryUInt32(@"Software\Valve\Steam\ActiveProcess", "ActiveUser") ??
+            ReadSteamRegistryUInt32(@"Software\Valve\Steam", "ActiveUser");
+    }
+
+    private static string ToSteam64(uint accountId)
+    {
+        const ulong individualAccountUniverseBase = 76561197960265728UL;
+        return (individualAccountUniverseBase + accountId).ToString(CultureInfo.InvariantCulture);
+    }
+
+    private static string? FindAccountNameBySteamId(
+        Dictionary<string, object> loginUsers,
+        string steamId)
+    {
+        if (!TryGetUsers(loginUsers, out var users) ||
+            !users.TryGetValue(steamId, out var value) ||
+            value is not Dictionary<string, object> user)
+        {
+            return null;
+        }
+
+        return GetString(user, "AccountName");
+    }
+
+    private static string? FindAccountNameBySteamId(string configPath, string steamId)
+    {
+        var config = VdfDocument.LoadOrEmpty(configPath);
+        var steam = GetPath(config, "InstallConfigStore", "Software", "Valve", "Steam");
+        if (steam is null ||
+            !steam.TryGetValue("Accounts", out var accountsValue) ||
+            accountsValue is not Dictionary<string, object> accounts)
+        {
+            return null;
+        }
+
+        foreach (var (accountName, value) in accounts)
+        {
+            if (value is Dictionary<string, object> account &&
+                string.Equals(GetString(account, "SteamID"), steamId, StringComparison.OrdinalIgnoreCase))
+            {
+                return accountName;
+            }
+        }
+
+        return null;
+    }
+
+    private static Dictionary<string, object>? GetPath(
+        Dictionary<string, object> root,
+        params string[] keys)
+    {
+        var current = root;
+        foreach (var key in keys)
+        {
+            if (!current.TryGetValue(key, out var value) ||
+                value is not Dictionary<string, object> child)
+            {
+                return null;
+            }
+
+            current = child;
+        }
+
+        return current;
+    }
+
+    private static uint? ReadSteamRegistryUInt32(string keyPath, string valueName)
+    {
+        try
+        {
+            using var baseKey = RegistryKey.OpenBaseKey(RegistryHive.CurrentUser, RegistryView.Default);
+            using var key = baseKey.OpenSubKey(keyPath);
+            var value = key?.GetValue(valueName);
+            return value switch
+            {
+                int intValue when intValue > 0 => unchecked((uint)intValue),
+                uint uintValue when uintValue > 0 => uintValue,
+                long longValue when longValue is > 0 and <= uint.MaxValue => (uint)longValue,
+                string stringValue when uint.TryParse(stringValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) && parsed > 0 => parsed,
+                _ => null
+            };
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? ReadSteamRegistryString(string valueName)
+    {
+        try
+        {
+            using var baseKey = RegistryKey.OpenBaseKey(RegistryHive.CurrentUser, RegistryView.Default);
+            using var key = baseKey.OpenSubKey(@"Software\Valve\Steam");
+            return key?.GetValue(valueName) as string;
+        }
+        catch
+        {
+            return null;
+        }
     }
 }
