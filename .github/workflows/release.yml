@@ -11,14 +11,14 @@ permissions:
 jobs:
   release-win-x64:
     name: Build and release Windows x64
-    runs-on: windows-latest
+    runs-on: windows-2025
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6.0.3
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5.3.0
         with:
           dotnet-version: 8.0.x
 
