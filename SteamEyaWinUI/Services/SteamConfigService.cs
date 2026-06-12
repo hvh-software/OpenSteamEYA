@@ -40,29 +40,19 @@ internal sealed class SteamConfigService
 
     private static void UpdateConfigVdf(string path, string accountName, string steamId)
     {
-        var config = VdfDocument.LoadOrEmpty(path);
+        // 对齐 SteamEYA_GUI.exe（sub_140003640）：config.vdf 从零生成、整体覆盖，
+        // 绝不读取/合并旧文件。旧实现用 LoadOrEmpty 读出用户原有 config.vdf
+        // （常有 20KB+），再经我们手写的 VDF 解析/序列化往返一遍——只要某处结构
+        // 往返后被破坏，Steam 启动时读不动 config.vdf 就会把它重置，连带忽略我们
+        // 写入 loginusers.vdf/local.vdf 的自动登录，停在登录界面。这正是「上号流程
+        // 全部成功、Steam 进程也起来了，却没自动登录」且只在部分机器复现的根因
+        // （取决于该机 config.vdf 里有没有我们解析器处理不好的内容）。参考二进制
+        // 干脆只写下面这三项最小模板，彻底规避往返破坏。
+        var config = new Dictionary<string, object>(StringComparer.Ordinal);
         var steam = EnsurePath(config, "InstallConfigStore", "Software", "Valve", "Steam");
 
         steam["AutoUpdateWindowEnabled"] = "0";
-        steam["ipv6check_http_state"] = "bad";
-        steam["ipv6check_udp_state"] = "bad";
-        steam["ShaderCacheManager"] = new Dictionary<string, object>
-        {
-            ["HasCurrentBucket"] = "1",
-            ["CurrentBucketGPU"] = "b4799b250d4196b0;36174e7cc31a08f9",
-            ["CurrentBucketDriver"] = "W2:c18b09d9c69329b41cdbbf3de627bc9f;W2:ee32edf67d134b7cc2ec0cdecbd00037"
-        };
-        steam["RecentWebSocket443Failures"] = "";
-        steam["RecentWebSocketNon443Failures"] = "";
-        steam["RecentUDPFailures"] = "";
-        steam["RecentTCPFailures"] = "";
-        steam["CellIDServerOverride"] = "170";
         steam["MTBF"] = Random.Shared.Next(100000000, 999999999).ToString();
-        steam["cip"] = "02000000507a6c24d6e96c6b00004021a356";
-        steam["SurveyDate"] = "2017-10-22";
-        steam["SurveyDateVersion"] = "-1724767764117155760";
-        steam["SurveyDateType"] = "3";
-        steam["Rate"] = "30000";
 
         var accounts = EnsureObject(steam, "Accounts");
         accounts[accountName] = new Dictionary<string, object>
