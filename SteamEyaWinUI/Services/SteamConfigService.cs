@@ -20,7 +20,7 @@ internal sealed class SteamConfigService
 
     private static void UpdateConfigVdf(string path, string accountName, string steamId)
     {
-        var config = VdfDocument.Load(path);
+        var config = VdfDocument.LoadOrEmpty(path);
         var steam = EnsurePath(config, "InstallConfigStore", "Software", "Valve", "Steam");
 
         steam["AutoUpdateWindowEnabled"] = "0";
@@ -55,7 +55,7 @@ internal sealed class SteamConfigService
 
     private static void UpdateLoginUsersVdf(string path, string accountName, string steamId)
     {
-        var loginUsers = VdfDocument.Load(path);
+        var loginUsers = VdfDocument.LoadOrEmpty(path);
         var users = EnsureObject(loginUsers, "users");
 
         foreach (var user in users.Values.OfType<Dictionary<string, object>>())
@@ -80,7 +80,7 @@ internal sealed class SteamConfigService
 
     private static void UpdateLocalVdf(string path, string accountCrc32, string encryptedJwt)
     {
-        var local = VdfDocument.Load(path);
+        var local = VdfDocument.LoadOrEmpty(path);
         var connectCache = EnsurePath(
             local,
             "MachineUserConfigStore",
