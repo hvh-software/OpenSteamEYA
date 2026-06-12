@@ -13,9 +13,29 @@ internal sealed class SteamConfigService
     {
         Directory.CreateDirectory(paths.ConfigPath);
 
-        UpdateConfigVdf(Path.Combine(paths.ConfigPath, "config.vdf"), accountName, steamId);
-        UpdateLoginUsersVdf(Path.Combine(paths.ConfigPath, "loginusers.vdf"), accountName, steamId);
+        var configPath = Path.Combine(paths.ConfigPath, "config.vdf");
+        var loginUsersPath = Path.Combine(paths.ConfigPath, "loginusers.vdf");
+
+        UpdateConfigVdf(configPath, accountName, steamId);
+        AppLog.Info($"已写入 config.vdf（{FileLength(configPath)} 字节）：\"{configPath}\"");
+
+        UpdateLoginUsersVdf(loginUsersPath, accountName, steamId);
+        AppLog.Info($"已写入 loginusers.vdf（{FileLength(loginUsersPath)} 字节）：\"{loginUsersPath}\"");
+
         UpdateLocalVdf(paths.LocalVdfPath, accountCrc32, encryptedJwt);
+        AppLog.Info($"已写入 local.vdf（{FileLength(paths.LocalVdfPath)} 字节）：\"{paths.LocalVdfPath}\"");
+    }
+
+    private static long FileLength(string path)
+    {
+        try
+        {
+            return new FileInfo(path).Length;
+        }
+        catch
+        {
+            return -1;
+        }
     }
 
     private static void UpdateConfigVdf(string path, string accountName, string steamId)

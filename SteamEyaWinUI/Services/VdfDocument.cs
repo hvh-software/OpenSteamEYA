@@ -31,8 +31,9 @@ internal static class VdfDocument
         {
             return Load(path);
         }
-        catch
+        catch (Exception ex)
         {
+            AppLog.Warn($"解析 {Path.GetFileName(path)} 失败，按空文档继续（将重新生成该文件）：{ex.Message}");
             return new Dictionary<string, object>(StringComparer.Ordinal);
         }
     }

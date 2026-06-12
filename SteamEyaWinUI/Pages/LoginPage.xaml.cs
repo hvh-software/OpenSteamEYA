@@ -124,7 +124,8 @@ public sealed partial class LoginPage : Page
         }
         catch (Exception ex)
         {
-            ShowStatus(ex.Message, InfoBarSeverity.Error);
+            AppLog.Error("登录失败。", ex);
+            ShowStatus($"{ex.Message}（诊断日志：{AppLog.LogFilePath}）", InfoBarSeverity.Error);
         }
         finally
         {
