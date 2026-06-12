@@ -34,7 +34,15 @@ public sealed record CsPremierScoreResult(
     {
         null => "未知（GC 未响应）",
         0 => "无",
-        _ => $"{FormatDuration(PenaltySeconds.Value)}（原因 {PenaltyReason ?? 0}）"
+        _ => $"{FormatDuration(PenaltySeconds.Value)}（{DescribePenaltyReason(PenaltyReason)}）"
+    };
+
+    // 已知的 GC 冷却原因码映射为可读文案，未知码保留原始 "原因 N" 形式。
+    private static string DescribePenaltyReason(uint? reason) => reason switch
+    {
+        7 => "放弃比赛",
+        22 => "vaclive",
+        _ => $"原因 {reason ?? 0}"
     };
 
     public string GcVacText => VacBanned switch
