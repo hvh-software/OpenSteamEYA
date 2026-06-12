@@ -334,20 +334,34 @@ public sealed partial class LoginPage : Page
 
         UpdateAccountInfo(accountName, eyaToken);
         await UpdateAccountProfileAsync(accountName, eyaToken);
-        AccountInfoPremierScoreText.Text = "等待令牌验证";
-        AccountInfoCsLevelText.Text = "等待令牌验证";
-        AccountInfoCooldownStatusText.Text = "等待令牌验证";
-
-        var online = await ValidateTokenOnlineAsync(eyaToken);
-        if (!online.IsValid)
-        {
-            throw new InvalidOperationException($"{online.Status}无法一键查询。");
-        }
-
+        AccountInfoAvailabilityText.Text = "正在验证并查询";
+        AccountInfoAvailabilityText.Foreground = FormatHelper.GetStatusBrush(InfoBarSeverity.Informational);
         AccountInfoPremierScoreText.Text = "正在查询";
         AccountInfoCsLevelText.Text = "正在查询";
         AccountInfoCooldownStatusText.Text = "正在查询";
-        var score = await AppState.PremierScoreService.QueryAsync(eyaToken, steamId);
+
+        CsPremierScoreResult score;
+        SteamTokenOnlineValidationResult online;
+        try
+        {
+            score = await AppState.PremierScoreService.QueryAsync(eyaToken, steamId);
+            online = new SteamTokenOnlineValidationResult(true, "Steam 已接受该令牌。");
+            AccountInfoAvailabilityText.Text = "有效";
+            AccountInfoAvailabilityText.Foreground = FormatHelper.GetStatusBrush(InfoBarSeverity.Success);
+        }
+        catch (SteamCmException ex) when (ex.IsTokenFailure)
+        {
+            AccountInfoAvailabilityText.Text = "无效";
+            AccountInfoAvailabilityText.Foreground = FormatHelper.GetStatusBrush(InfoBarSeverity.Error);
+            throw new InvalidOperationException($"{ex.Message}无法一键查询。", ex);
+        }
+        catch
+        {
+            AccountInfoAvailabilityText.Text = "未验证";
+            AccountInfoAvailabilityText.Foreground = FormatHelper.GetStatusBrush(InfoBarSeverity.Informational);
+            throw;
+        }
+
         AppState.AccountHistoryService.SaveCsAccountStatus(
             accountName,
             steamId,

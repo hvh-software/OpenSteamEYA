@@ -76,10 +76,15 @@ internal sealed class SteamCmClient : IAsyncDisposable
     private const int EMsgClientGamesPlayedWithDataBlob = 5410;
     private const int EMsgClientToGC = 5452;
     private const int EMsgClientFromGC = 5453;
+    private const int MaxCachedGcMessagesPerKey = 8;
+    private const int MaxCachedGcMessageKeys = 64;
 
     private readonly HttpClient _httpClient;
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<ServiceMethodResponse>> _jobs = new();
     private readonly ConcurrentDictionary<string, TaskCompletionSource<SteamGcClientMessage>> _gcWaiters = new();
+    private readonly Dictionary<string, Queue<SteamGcClientMessage>> _gcMessageCache = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _cacheableGcMessageKeys = new(StringComparer.Ordinal);
+    private readonly object _gcMessagesLock = new();
     private readonly SemaphoreSlim _sendLock = new(1, 1);
     private readonly CancellationTokenSource _receiveCancellation = new();
 
@@ -236,15 +241,29 @@ internal sealed class SteamCmClient : IAsyncDisposable
         uint appId,
         uint msgType,
         TimeSpan timeout,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool cacheUnmatched = false)
     {
         var key = GetGcWaiterKey(appId, msgType);
         var completion = new TaskCompletionSource<SteamGcClientMessage>(
             TaskCreationOptions.RunContinuationsAsynchronously);
 
-        if (!_gcWaiters.TryAdd(key, completion))
+        lock (_gcMessagesLock)
         {
-            throw new InvalidOperationException("已有相同的 GC 消息等待任务。");
+            if (cacheUnmatched)
+            {
+                _cacheableGcMessageKeys.Add(key);
+            }
+
+            if (TryDequeueCachedGcMessage(key, out var cachedMessage))
+            {
+                return cachedMessage;
+            }
+
+            if (!_gcWaiters.TryAdd(key, completion))
+            {
+                throw new InvalidOperationException("已有相同的 GC 消息等待任务。");
+            }
         }
 
         try
@@ -253,7 +272,10 @@ internal sealed class SteamCmClient : IAsyncDisposable
         }
         finally
         {
-            _gcWaiters.TryRemove(key, out _);
+            lock (_gcMessagesLock)
+            {
+                _gcWaiters.TryRemove(key, out _);
+            }
         }
     }
 
@@ -653,11 +675,60 @@ internal sealed class SteamCmClient : IAsyncDisposable
         var messageBody = ExtractGcMessageBody(rawMsgType.Value, payload);
         var message = new SteamGcClientMessage(appId.Value, msgType, messageBody);
         var key = GetGcWaiterKey(appId.Value, msgType);
+        TaskCompletionSource<SteamGcClientMessage>? waiter = null;
 
-        if (_gcWaiters.TryRemove(key, out var waiter))
+        lock (_gcMessagesLock)
         {
-            waiter.TrySetResult(message);
+            if (!_gcWaiters.TryRemove(key, out waiter))
+            {
+                if (_cacheableGcMessageKeys.Contains(key))
+                {
+                    EnqueueCachedGcMessage(key, message);
+                }
+
+                return;
+            }
         }
+
+        waiter.TrySetResult(message);
+    }
+
+    private bool TryDequeueCachedGcMessage(string key, out SteamGcClientMessage message)
+    {
+        if (_gcMessageCache.TryGetValue(key, out var queue) && queue.Count > 0)
+        {
+            message = queue.Dequeue();
+            if (queue.Count == 0)
+            {
+                _gcMessageCache.Remove(key);
+            }
+
+            return true;
+        }
+
+        message = default!;
+        return false;
+    }
+
+    private void EnqueueCachedGcMessage(string key, SteamGcClientMessage message)
+    {
+        if (!_gcMessageCache.TryGetValue(key, out var queue))
+        {
+            if (_gcMessageCache.Count >= MaxCachedGcMessageKeys)
+            {
+                return;
+            }
+
+            queue = new Queue<SteamGcClientMessage>();
+            _gcMessageCache[key] = queue;
+        }
+
+        while (queue.Count >= MaxCachedGcMessagesPerKey)
+        {
+            queue.Dequeue();
+        }
+
+        queue.Enqueue(message);
     }
 
     private void ProcessMulti(byte[] body)
@@ -753,6 +824,19 @@ internal sealed class SteamCmClient : IAsyncDisposable
             {
                 job.TrySetException(ex);
             }
+        }
+
+        List<TaskCompletionSource<SteamGcClientMessage>> gcWaiters;
+        lock (_gcMessagesLock)
+        {
+            gcWaiters = _gcWaiters.Values.ToList();
+            _gcWaiters.Clear();
+            _gcMessageCache.Clear();
+        }
+
+        foreach (var waiter in gcWaiters)
+        {
+            waiter.TrySetException(ex);
         }
     }
 

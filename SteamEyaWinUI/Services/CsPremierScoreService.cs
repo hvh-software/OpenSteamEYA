@@ -15,10 +15,12 @@ internal sealed class CsPremierScoreService
     private const uint PremierRankTypeId = 11;
     private const uint CsClientVersion = 2_000_244;
 
-    // 9110 不会在首次 GC 连接时可靠下发，需要“断开 GC 再重连”循环触发（与 cooldown.js 一致：6 轮、
-    // 每轮等 11 秒、断开后 2.5 秒再重连），另设总时限兜底防止单轮 GC welcome 重试拖长整体耗时。
+    // 9110 可能在 GC welcome 前后主动下发；等待必须覆盖握手窗口，接收层也会缓存早到消息。
+    // 仍保留“断开 GC 再重连”循环触发（与 cooldown.js 一致：6 轮、每轮等 11 秒、
+    // 断开后 2.5 秒再重连），另设总时限兜底防止单轮 GC welcome 重试拖长整体耗时。
     private const int MaxHelloCycles = 6;
     private static readonly TimeSpan HelloWaitTimeout = TimeSpan.FromSeconds(11);
+    private static readonly TimeSpan CachedHelloPollTimeout = TimeSpan.FromMilliseconds(250);
     private static readonly TimeSpan GcReconnectDelay = TimeSpan.FromSeconds(2.5);
     private static readonly TimeSpan HelloTotalBudget = TimeSpan.FromSeconds(100);
 
@@ -43,13 +45,13 @@ internal sealed class CsPremierScoreService
 
         try
         {
+            var helloTask = WaitForMatchmakingHelloAsync(cmClient, cancellationToken);
             await cmClient.SetGamesPlayedAsync([Cs2AppId], cancellationToken);
             await ConnectToGameCoordinatorAsync(cmClient, cancellationToken);
 
             // 冷却/VAC 只能从 GC 的 MatchmakingGC2ClientHello(9110) 拿：PlayersProfile 对自己
-            // 账号的 penalty 字段永远为空。先挂 9110 等待（welcome 后 GC 可能主动下发），再发
-            // 9109 请求，随后照常请求 PlayersProfile 取优先分/等级。
-            var helloTask = WaitForMatchmakingHelloAsync(cmClient, cancellationToken);
+            // 账号的 penalty 字段永远为空。9110 waiter 已在进 730 前挂好，避免 welcome 阶段
+            // 主动下发的 9110 被错过；这里再发 9109 请求，随后照常请求 PlayersProfile 取优先分/等级。
             await cmClient.SendGcProtobufMessageAsync(
                 Cs2AppId,
                 MatchmakingClient2GCHello,
@@ -72,6 +74,10 @@ internal sealed class CsPremierScoreService
             var profile = DecodePlayersProfile(accountId, profileMessage.Payload);
 
             var helloData = await helloTask;
+            helloData ??= await WaitForMatchmakingHelloAsync(
+                cmClient,
+                CachedHelloPollTimeout,
+                cancellationToken);
             var helloDeadline = DateTimeOffset.UtcNow + HelloTotalBudget;
 
             for (var cycle = 2;
@@ -84,6 +90,7 @@ internal sealed class CsPremierScoreService
                 {
                     await cmClient.SetGamesPlayedAsync([], cancellationToken);
                     await Task.Delay(GcReconnectDelay, cancellationToken);
+                    helloTask = WaitForMatchmakingHelloAsync(cmClient, cancellationToken);
                     await cmClient.SetGamesPlayedAsync([Cs2AppId], cancellationToken);
                     await ConnectToGameCoordinatorAsync(cmClient, cancellationToken);
                 }
@@ -93,13 +100,16 @@ internal sealed class CsPremierScoreService
                     break;
                 }
 
-                helloTask = WaitForMatchmakingHelloAsync(cmClient, cancellationToken);
                 await cmClient.SendGcProtobufMessageAsync(
                     Cs2AppId,
                     MatchmakingClient2GCHello,
                     [],
                     cancellationToken);
                 helloData = await helloTask;
+                helloData ??= await WaitForMatchmakingHelloAsync(
+                    cmClient,
+                    CachedHelloPollTimeout,
+                    cancellationToken);
             }
 
             var premier = profile.Rankings.FirstOrDefault(ranking =>
@@ -135,13 +145,22 @@ internal sealed class CsPremierScoreService
         SteamCmClient cmClient,
         CancellationToken cancellationToken)
     {
+        return await WaitForMatchmakingHelloAsync(cmClient, HelloWaitTimeout, cancellationToken);
+    }
+
+    private static async Task<CsAccountProfile?> WaitForMatchmakingHelloAsync(
+        SteamCmClient cmClient,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
         try
         {
             var message = await cmClient.WaitForGcMessageAsync(
                 Cs2AppId,
                 MatchmakingGC2ClientHello,
-                HelloWaitTimeout,
-                cancellationToken);
+                timeout,
+                cancellationToken,
+                cacheUnmatched: true);
             return DecodeAccountProfile(message.Payload);
         }
         catch (TimeoutException)
