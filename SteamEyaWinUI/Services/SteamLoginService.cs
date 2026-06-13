@@ -39,7 +39,7 @@ internal sealed class SteamLoginService
                 cachedAccountCandidates = _steamConfigService.GetLoginAccounts(paths);
             }
 
-            CacheLoginAccounts(cachedAccountCandidates, accountName, token.SteamId, progress);
+            CacheLoginAccounts(cachedAccountCandidates, accountName, token.SteamId);
             _steamConfigService.UpdateLoginFiles(
                 paths,
                 accountName,
@@ -125,8 +125,7 @@ internal sealed class SteamLoginService
     private void CacheLoginAccounts(
         IReadOnlyList<CachedSteamLoginAccount> accounts,
         string nextAccountName,
-        string nextSteamId,
-        IProgress<string>? progress)
+        string nextSteamId)
     {
         var filtered = accounts
             .Where(account =>
@@ -142,7 +141,6 @@ internal sealed class SteamLoginService
 
         var saved = _loginCacheService.SaveMany(filtered);
         AppLog.Info($"Cached {saved.Count} non-EYA Steam account(s) for restore.");
-
         StartCachedProfileRefresh(saved);
     }
 

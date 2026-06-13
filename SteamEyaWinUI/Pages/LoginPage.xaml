@@ -143,6 +143,20 @@
                         </StackPanel>
                     </Button>
                 </Grid>
+
+                <!-- 取消按钮仅忙碌时可见；OnBusyChanged 不禁用它，busy 期间始终可点。 -->
+                <Button
+                    x:Name="CancelButton"
+                    HorizontalAlignment="Stretch"
+                    Padding="0,10"
+                    Visibility="Collapsed"
+                    Click="CancelButton_Click"
+                    ToolTipService.ToolTip="取消当前正在进行的操作">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE711;" FontSize="16" />
+                        <TextBlock Text="取消" />
+                    </StackPanel>
+                </Button>
             </StackPanel>
 
             <Border Grid.Column="1" Style="{StaticResource CardBorderStyle}" VerticalAlignment="Top">

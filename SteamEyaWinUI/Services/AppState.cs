@@ -46,6 +46,33 @@ internal static class AppState
         BusyChanged?.Invoke(isBusy);
     }
 
+    // 当前忙碌操作的取消源。全部由 UI 线程访问（页面长流程的开始/取消/结束都在 UI 线程），
+    // 无需额外同步。
+    private static CancellationTokenSource? _busyCts;
+
+    /// <summary>开始一段可取消的忙碌操作：置忙并新建 CTS，返回其 Token 供长任务传入。</summary>
+    public static CancellationToken BeginBusyOperation()
+    {
+        _busyCts?.Dispose();
+        _busyCts = new CancellationTokenSource();
+        SetBusy(true);
+        return _busyCts.Token;
+    }
+
+    /// <summary>取消当前忙碌操作；无操作进行时为 no-op（取消按钮点击调用）。</summary>
+    public static void CancelBusyOperation()
+    {
+        _busyCts?.Cancel();
+    }
+
+    /// <summary>结束忙碌操作：解忙并释放 CTS。幂等，可在 finally 中安全调用。</summary>
+    public static void EndBusyOperation()
+    {
+        SetBusy(false);
+        _busyCts?.Dispose();
+        _busyCts = null;
+    }
+
     // ---------- 历史账号缓存 ----------
 
     public static IReadOnlyList<SteamAccountHistoryItem> HistoryAccounts { get; private set; } = [];

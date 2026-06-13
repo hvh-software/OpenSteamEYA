@@ -52,6 +52,15 @@ public sealed partial class LoginPage : Page
         ClearWorkshopButton.IsEnabled = enabled;
         LoginButton.IsEnabled = enabled;
         OneClickQueryButton.IsEnabled = enabled;
+
+        // 取消按钮反其道而行：仅忙碌时出现且保持可用，让用户中断长任务。
+        CancelButton.Visibility = isBusy ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void CancelButton_Click(object sender, RoutedEventArgs e)
+    {
+        ShowStatus("正在取消...", InfoBarSeverity.Informational);
+        AppState.CancelBusyOperation();
     }
 
     /// <summary>从历史页载入账号到登录页（保持旧版行为：切手动模式并填充凭据）。</summary>
@@ -70,7 +79,7 @@ public sealed partial class LoginPage : Page
 
     private async void ClearWorkshopButton_Click(object sender, RoutedEventArgs e)
     {
-        AppState.SetBusy(true);
+        var cancellationToken = AppState.BeginBusyOperation();
         ShowStatus("正在清除创意工坊订阅...", InfoBarSeverity.Informational);
 
         var progress = new Progress<string>(message =>
@@ -82,12 +91,28 @@ public sealed partial class LoginPage : Page
             EnsureTokenValidForAction(eyaToken, "清除创意工坊订阅");
             UpdateAccountInfo(accountName, eyaToken);
             await UpdateAccountProfileAsync(accountName, eyaToken);
-            await EnsureTokenAcceptedBySteamAsync(eyaToken, "清除创意工坊订阅");
-            var count = await AppState.WorkshopService.ClearSubscriptionsAsync(eyaToken, progress);
+
+            // 不再前置 EnsureTokenAcceptedBySteamAsync：ClearSubscriptionsAsync 内部已完整握手，
+            // 令牌被拒会在下方按 SteamCmException.IsTokenFailure 处理，避免无谓的双重握手。
+            var count = await AppState.WorkshopService.ClearSubscriptionsAsync(
+                eyaToken,
+                progress,
+                cancellationToken);
 
             ShowStatus(
                 $"已成功取消 {count} 个创意工坊订阅。",
                 InfoBarSeverity.Success);
+        }
+        catch (OperationCanceledException)
+        {
+            ShowStatus("已取消清除创意工坊订阅。", InfoBarSeverity.Informational);
+        }
+        catch (SteamCmException ex) when (ex.IsTokenFailure)
+        {
+            // 令牌被 Steam 拒绝：与前置验证失败时一致地标红可用状态，再报错。
+            AccountInfoAvailabilityText.Text = "无效";
+            AccountInfoAvailabilityText.Foreground = FormatHelper.GetStatusBrush(InfoBarSeverity.Error);
+            ShowStatus($"{ex.Message}无法清除创意工坊订阅。", InfoBarSeverity.Error);
         }
         catch (Exception ex)
         {
@@ -95,13 +120,13 @@ public sealed partial class LoginPage : Page
         }
         finally
         {
-            AppState.SetBusy(false);
+            AppState.EndBusyOperation();
         }
     }
 
     private async void LoginButton_Click(object sender, RoutedEventArgs e)
     {
-        AppState.SetBusy(true);
+        var cancellationToken = AppState.BeginBusyOperation();
         ShowStatus("正在处理登录...", InfoBarSeverity.Informational);
 
         var progress = new Progress<string>(message =>
@@ -112,15 +137,22 @@ public sealed partial class LoginPage : Page
             var (accountName, eyaToken) = await GetCredentialsAsync();
             EnsureTokenValidForAction(eyaToken, "登录到 Steam");
             UpdateAccountInfo(accountName, eyaToken);
-            await UpdateAccountProfileAsync(accountName, eyaToken);
-            await EnsureTokenAcceptedBySteamAsync(eyaToken, "登录到 Steam");
-            var result = await Task.Run(() => AppState.LoginService.Login(accountName, eyaToken, progress));
-            var historyStatus = await SaveLoginHistoryAsync(result, eyaToken);
+            // 这一次抓取的 persona/头像直接传给 SaveLoginAsync，避免历史保存时重复抓取一遍。
+            var profile = await UpdateAccountProfileAsync(accountName, eyaToken);
+            await EnsureTokenAcceptedBySteamAsync(eyaToken, "登录到 Steam", cancellationToken);
+            var result = await Task.Run(
+                () => AppState.LoginService.Login(accountName, eyaToken, progress),
+                cancellationToken);
+            var historyStatus = await SaveLoginHistoryAsync(result, eyaToken, profile);
             ShowStatus(
                 $"登录已启动。SteamID: {result.SteamId}，令牌剩余 {FormatHelper.FormatRemaining(result.Remaining)}{historyStatus}。",
                 historyStatus.StartsWith("，但", StringComparison.Ordinal)
                     ? InfoBarSeverity.Warning
                     : InfoBarSeverity.Success);
+        }
+        catch (OperationCanceledException)
+        {
+            ShowStatus("已取消登录。", InfoBarSeverity.Informational);
         }
         catch (Exception ex)
         {
@@ -129,7 +161,7 @@ public sealed partial class LoginPage : Page
         }
         finally
         {
-            AppState.SetBusy(false);
+            AppState.EndBusyOperation();
         }
     }
 
@@ -165,16 +197,20 @@ public sealed partial class LoginPage : Page
 
     private async void OneClickQueryButton_Click(object sender, RoutedEventArgs e)
     {
-        AppState.SetBusy(true);
+        var cancellationToken = AppState.BeginBusyOperation();
         ShowStatus("正在一键查询账号状态...", InfoBarSeverity.Informational);
 
         try
         {
             var (accountName, eyaToken) = await GetCredentialsAsync();
-            var score = await QueryAndSaveCsStatusAsync(accountName, eyaToken);
+            var score = await QueryAndSaveCsStatusAsync(accountName, eyaToken, cancellationToken);
             ShowStatus(
                 $"查询完成：优先分 {score.DisplayText}，CS2等级 {score.PlayerLevelText}，冷却 {score.CooldownText}，GC VAC {score.GcVacText}。",
                 InfoBarSeverity.Success);
+        }
+        catch (OperationCanceledException)
+        {
+            ShowStatus("已取消一键查询。", InfoBarSeverity.Informational);
         }
         catch (Exception ex)
         {
@@ -182,7 +218,7 @@ public sealed partial class LoginPage : Page
         }
         finally
         {
-            AppState.SetBusy(false);
+            AppState.EndBusyOperation();
         }
     }
 
@@ -321,7 +357,8 @@ public sealed partial class LoginPage : Page
     /// </summary>
     public async Task<CsPremierScoreResult> QueryAndSaveCsStatusAsync(
         string accountName,
-        string eyaToken)
+        string eyaToken,
+        CancellationToken cancellationToken = default)
     {
         eyaToken = FormatHelper.NormalizeToken(eyaToken);
         var tokenInfo = AppState.JwtTokenService.Inspect(eyaToken);
@@ -345,7 +382,7 @@ public sealed partial class LoginPage : Page
         SteamTokenOnlineValidationResult online;
         try
         {
-            score = await AppState.PremierScoreService.QueryAsync(eyaToken, steamId);
+            score = await AppState.PremierScoreService.QueryAsync(eyaToken, steamId, cancellationToken);
             online = new SteamTokenOnlineValidationResult(true, "Steam 已接受该令牌。");
             AccountInfoAvailabilityText.Text = "有效";
             AccountInfoAvailabilityText.Foreground = FormatHelper.GetStatusBrush(InfoBarSeverity.Success);
@@ -379,15 +416,23 @@ public sealed partial class LoginPage : Page
         return score;
     }
 
-    private async Task<string> SaveLoginHistoryAsync(LoginResult result, string eyaToken)
+    private async Task<string> SaveLoginHistoryAsync(
+        LoginResult result,
+        string eyaToken,
+        SteamAccountHistoryItem? prefetchedProfile)
     {
         try
         {
+            // 登录前 UpdateAccountProfileAsync 已抓过一次 persona/头像，这里直接预取传入，
+            // 让 SaveLoginAsync 跳过重复抓取（新账号首登尤其明显）。
             await AppState.AccountHistoryService.SaveLoginAsync(
                 result.AccountName,
                 result.SteamId,
                 eyaToken,
-                result.ExpiresAt);
+                result.ExpiresAt,
+                NullIfBlank(prefetchedProfile?.PersonaName),
+                NullIfBlank(prefetchedProfile?.AvatarUrl),
+                NullIfBlank(prefetchedProfile?.AvatarPath));
             AppState.ReloadHistory(result.SteamId);
             ApplyStoredAccountInfoProfile(result.SteamId);
             return "，已更新历史账号";
@@ -398,12 +443,19 @@ public sealed partial class LoginPage : Page
         }
     }
 
-    private async Task UpdateAccountProfileAsync(string accountName, string eyaToken)
+    private static string? NullIfBlank(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value;
+
+    /// <summary>
+    /// 同步右侧账号信息面板的头像/昵称，并返回本次已知的资料供调用方预取（避免后续 SaveLoginAsync 再抓一遍）。
+    /// 命中已完整的历史记录时返回该记录；否则返回网络抓取到的预览；都拿不到返回 null。
+    /// </summary>
+    private async Task<SteamAccountHistoryItem?> UpdateAccountProfileAsync(string accountName, string eyaToken)
     {
         var tokenInfo = AppState.JwtTokenService.Inspect(eyaToken);
         if (string.IsNullOrWhiteSpace(tokenInfo.SteamId))
         {
-            return;
+            return null;
         }
 
         var storedAccount = AppState.FindHistoryAccount(tokenInfo.SteamId);
@@ -414,7 +466,7 @@ public sealed partial class LoginPage : Page
                 (!string.IsNullOrWhiteSpace(storedAccount.AvatarPath) ||
                     !string.IsNullOrWhiteSpace(storedAccount.AvatarUrl)))
             {
-                return;
+                return storedAccount;
             }
         }
 
@@ -428,12 +480,15 @@ public sealed partial class LoginPage : Page
             if (profile is not null)
             {
                 ApplyAccountInfoProfile(profile);
+                return profile;
             }
         }
         catch
         {
             // Profile sync is decorative; token validation and account actions should continue.
         }
+
+        return storedAccount;
     }
 
     private void ApplyStoredAccountInfoProfile(string steamId)
@@ -539,14 +594,45 @@ public sealed partial class LoginPage : Page
         }
     }
 
-    private async Task EnsureTokenAcceptedBySteamAsync(string eyaToken, string actionName)
+    private async Task EnsureTokenAcceptedBySteamAsync(
+        string eyaToken,
+        string actionName,
+        CancellationToken cancellationToken = default)
     {
-        var online = await ValidateTokenOnlineAsync(eyaToken);
+        AccountInfoAvailabilityText.Text = "正在验证";
+        AccountInfoAvailabilityText.Foreground = FormatHelper.GetStatusBrush(InfoBarSeverity.Informational);
+
+        SteamTokenOnlineValidationResult online;
+        try
+        {
+            // ValidateAsync 只把「令牌被 Steam 拒绝」转成 IsValid=false，网络/CM 不可达（含
+            // TimeoutException）会向上抛——上号本身只写 VDF+启动 Steam，不依赖本机连得上 CM，
+            // 故网络故障不应阻断上号，仅给中性提示后继续。
+            online = await AppState.TokenOnlineValidationService.ValidateAsync(eyaToken, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn($"在线验证令牌时无法连接 Steam，已跳过在线验证继续{actionName}：{ex.Message}");
+            AccountInfoAvailabilityText.Text = "未验证（网络不可达）";
+            AccountInfoAvailabilityText.Foreground = FormatHelper.GetStatusBrush(InfoBarSeverity.Warning);
+            ShowStatus($"无法连接 Steam 验证服务，已跳过在线验证，继续{actionName}。", InfoBarSeverity.Warning);
+            return;
+        }
+
+        AccountInfoAvailabilityText.Text = online.IsValid ? "有效" : "无效";
+        AccountInfoAvailabilityText.Foreground = FormatHelper.GetStatusBrush(
+            online.IsValid ? InfoBarSeverity.Success : InfoBarSeverity.Error);
+
         if (online.IsValid)
         {
             return;
         }
 
+        // 走到这里是令牌确实被 Steam 拒绝（IsTokenFailure 路径），维持红色并阻断后续动作。
         throw new InvalidOperationException($"{online.Status}无法{actionName}。");
     }
 

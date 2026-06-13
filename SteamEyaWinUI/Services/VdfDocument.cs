@@ -4,6 +4,10 @@ namespace SteamEyaWinUI.Services;
 
 internal static class VdfDocument
 {
+    // Steam 自己生成的 VDF 从不带 BOM；带 BOM 的 config.vdf Steam 读不动会整个重置
+    // （排查经过见 SteamConfigService.UpdateConfigVdf 注释），所以写盘必须用无 BOM 编码。
+    private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
+
     public static Dictionary<string, object> Load(string path)
     {
         if (!File.Exists(path))
@@ -46,7 +50,27 @@ internal static class VdfDocument
             Directory.CreateDirectory(directory);
         }
 
-        File.WriteAllText(path, Write(document), Encoding.UTF8);
+        // 先写临时文件再原子替换（同 AccountHistoryService.WriteDocument），
+        // 避免进程中断把 Steam 核心配置截成半截文件；随机后缀防止并发保存互踩临时文件。
+        var tempPath = path + "." + Path.GetRandomFileName() + ".tmp";
+        try
+        {
+            File.WriteAllText(tempPath, Write(document), Utf8NoBom);
+            File.Move(tempPath, path, overwrite: true);
+        }
+        catch
+        {
+            try
+            {
+                File.Delete(tempPath);
+            }
+            catch
+            {
+                // 清理失败只会残留临时文件，不影响正式文件，吞掉以保留原始异常。
+            }
+
+            throw;
+        }
     }
 
     private static string Write(Dictionary<string, object> document)
@@ -205,13 +229,30 @@ internal static class VdfDocument
                     continue;
                 }
 
+                // 孤立的 ']'（条件标记残缺等畸形输入）：ReadBare 会在它前面停下且不前进，
+                // 若落到下面的裸字符串分支会原地死循环，这里直接跳过。
+                if (current == ']')
+                {
+                    index++;
+                    continue;
+                }
+
                 if (current == '"')
                 {
                     tokens.Add(ReadQuoted(text, ref index));
                     continue;
                 }
 
-                tokens.Add(ReadBare(text, ref index));
+                var bare = ReadBare(text, ref index);
+                if (bare.Length == 0)
+                {
+                    // ReadBare 未前进说明遇到未被上面分支覆盖的停止字符，
+                    // 强制跳过以保证分词在任何输入下都能推进。
+                    index++;
+                    continue;
+                }
+
+                tokens.Add(bare);
             }
 
             return tokens;

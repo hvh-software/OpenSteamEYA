@@ -1,3 +1,5 @@
+using SteamEyaWinUI.Services;
+
 namespace SteamEyaWinUI.Models;
 
 // 冷却三字段（PenaltySeconds/PenaltyReason/VacBanned）来自 GC 的 MatchmakingGC2ClientHello(9110)，
@@ -13,8 +15,6 @@ public sealed record CsPremierScoreResult(
     int? PlayerLevel,
     bool InMatch)
 {
-    private const int MinimumPremierLevel = 10;
-
     public bool HasPremierScore => PremierRanking is not null && PremierRanking.RankId > 0;
 
     public bool HasCooldownData => PenaltySeconds.HasValue;
@@ -30,46 +30,14 @@ public sealed record CsPremierScoreResult(
         ? $"{PremierRanking!.RankId:N0}（胜场 {PremierRanking.Wins}）"
         : "暂无优先分";
 
-    public string CooldownText => PenaltySeconds switch
-    {
-        null => "未知（GC 未响应）",
-        0 => "无",
-        _ => $"{FormatDuration(PenaltySeconds.Value)}（{DescribePenaltyReason(PenaltyReason)}）"
-    };
+    public string CooldownText => FormatHelper.FormatCooldownText(PenaltySeconds, PenaltyReason, "未知（GC 未响应）");
 
-    // 已知的 GC 冷却原因码映射为可读文案，未知码保留原始 "原因 N" 形式。
-    private static string DescribePenaltyReason(uint? reason) => reason switch
-    {
-        7 => "放弃比赛",
-        22 => "vaclive",
-        _ => $"原因 {reason ?? 0}"
-    };
+    public string GcVacText => FormatHelper.FormatGcVacText(VacBanned, "未知");
 
-    public string GcVacText => VacBanned switch
-    {
-        null => "未知",
-        0 => "无",
-        _ => "有标记"
-    };
+    public string CooldownStatusText =>
+        FormatHelper.FormatCooldownStatusText(PenaltySeconds, PenaltyReason, VacBanned, "未知（GC 未响应）", "未知");
 
-    public string CooldownStatusText => $"冷却：{CooldownText}；GC VAC：{GcVacText}";
-
-    public string PlayerLevelText
-    {
-        get
-        {
-            if (!PlayerLevel.HasValue)
-            {
-                return "未读取";
-            }
-
-            var status = PlayerLevel.Value >= MinimumPremierLevel
-                ? "可打优先"
-                : $"未达 {MinimumPremierLevel} 级";
-
-            return $"{PlayerLevel.Value} 级（{status}）";
-        }
-    }
+    public string PlayerLevelText => FormatHelper.FormatPlayerLevelText(PlayerLevel, "未读取");
 
     public string StatusText
     {
@@ -98,36 +66,6 @@ public sealed record CsPremierScoreResult(
                 ? "未发现 CS2 限制"
                 : "冷却状态未知（GC 未响应，可稍后重试）";
         }
-    }
-
-    private static string FormatDuration(uint seconds)
-    {
-        if (seconds == 0)
-        {
-            return "无";
-        }
-
-        var days = seconds / 86400;
-        var hours = seconds % 86400 / 3600;
-        var minutes = seconds % 3600 / 60;
-        var parts = new List<string>();
-
-        if (days > 0)
-        {
-            parts.Add($"{days}天");
-        }
-
-        if (hours > 0)
-        {
-            parts.Add($"{hours}小时");
-        }
-
-        if (minutes > 0)
-        {
-            parts.Add($"{minutes}分");
-        }
-
-        return parts.Count > 0 ? string.Join("", parts) : $"{seconds}秒";
     }
 }
 

@@ -6,15 +6,6 @@ namespace SteamEyaWinUI.Services;
 
 internal sealed class SteamConfigService
 {
-    public CachedSteamLoginAccount? GetCurrentLoginAccount(SteamPaths paths)
-    {
-        var loginUsersPath = Path.Combine(paths.ConfigPath, "loginusers.vdf");
-        var loginUsers = VdfDocument.LoadOrEmpty(loginUsersPath);
-
-        return GetActiveLoginAccount(paths, loginUsers) ??
-            GetMostRecentLoginAccount(loginUsers);
-    }
-
     public IReadOnlyList<CachedSteamLoginAccount> GetLoginAccounts(SteamPaths paths)
     {
         var loginUsersPath = Path.Combine(paths.ConfigPath, "loginusers.vdf");
@@ -30,145 +21,6 @@ internal sealed class SteamConfigService
         accounts.AddRange(GetLoginUsersAccounts(loginUsers));
         accounts.AddRange(GetConfigAccounts(Path.Combine(paths.ConfigPath, "config.vdf")));
         return NormalizeLoginAccounts(accounts);
-    }
-
-    private static CachedSteamLoginAccount? GetActiveLoginAccount(
-        SteamPaths paths,
-        Dictionary<string, object> loginUsers)
-    {
-        var accountId = ReadActiveUserAccountId();
-        if (!accountId.HasValue)
-        {
-            return null;
-        }
-
-        var steamId = ToSteam64(accountId.Value);
-        var accountName = FindAccountNameBySteamId(loginUsers, steamId) ??
-            FindAccountNameBySteamId(Path.Combine(paths.ConfigPath, "config.vdf"), steamId) ??
-            ReadSteamRegistryString("AutoLoginUser");
-
-        if (string.IsNullOrWhiteSpace(accountName))
-        {
-            AppLog.Warn($"Found active Steam user {steamId}, but could not resolve its account name.");
-            return null;
-        }
-
-        AppLog.Info($"Found active Steam account for restore: {accountName} ({steamId}).");
-        return new CachedSteamLoginAccount
-        {
-            AccountName = accountName,
-            SteamId = steamId,
-            CachedAt = DateTimeOffset.Now
-        };
-    }
-
-    private static CachedSteamLoginAccount? GetMostRecentLoginAccount(
-        Dictionary<string, object> loginUsers)
-    {
-        if (!TryGetUsers(loginUsers, out var users))
-        {
-            return null;
-        }
-
-        foreach (var (steamId, value) in users)
-        {
-            if (value is not Dictionary<string, object> user ||
-                !IsEnabled(user, "MostRecent"))
-            {
-                continue;
-            }
-
-            var accountName = GetString(user, "AccountName");
-            if (string.IsNullOrWhiteSpace(accountName) || string.IsNullOrWhiteSpace(steamId))
-            {
-                continue;
-            }
-
-            return new CachedSteamLoginAccount
-            {
-                AccountName = accountName,
-                SteamId = steamId,
-                CachedAt = DateTimeOffset.Now
-            };
-        }
-
-        return null;
-    }
-
-    private static IEnumerable<CachedSteamLoginAccount> GetLoginUsersAccounts(
-        Dictionary<string, object> loginUsers)
-    {
-        if (!TryGetUsers(loginUsers, out var users))
-        {
-            yield break;
-        }
-
-        foreach (var (steamId, value) in users)
-        {
-            if (value is not Dictionary<string, object> user)
-            {
-                continue;
-            }
-
-            var accountName = GetString(user, "AccountName");
-            if (string.IsNullOrWhiteSpace(accountName) || string.IsNullOrWhiteSpace(steamId))
-            {
-                continue;
-            }
-
-            yield return new CachedSteamLoginAccount
-            {
-                AccountName = accountName,
-                SteamId = steamId,
-                PersonaName = GetString(user, "PersonaName"),
-                CachedAt = DateTimeOffset.Now
-            };
-        }
-    }
-
-    private static IEnumerable<CachedSteamLoginAccount> GetConfigAccounts(string configPath)
-    {
-        var config = VdfDocument.LoadOrEmpty(configPath);
-        var steam = GetPath(config, "InstallConfigStore", "Software", "Valve", "Steam");
-        if (steam is null ||
-            !steam.TryGetValue("Accounts", out var accountsValue) ||
-            accountsValue is not Dictionary<string, object> accounts)
-        {
-            yield break;
-        }
-
-        foreach (var (accountName, value) in accounts)
-        {
-            if (value is not Dictionary<string, object> account)
-            {
-                continue;
-            }
-
-            var steamId = GetString(account, "SteamID");
-            if (string.IsNullOrWhiteSpace(accountName) || string.IsNullOrWhiteSpace(steamId))
-            {
-                continue;
-            }
-
-            yield return new CachedSteamLoginAccount
-            {
-                AccountName = accountName,
-                SteamId = steamId,
-                CachedAt = DateTimeOffset.Now
-            };
-        }
-    }
-
-    private static IReadOnlyList<CachedSteamLoginAccount> NormalizeLoginAccounts(
-        IEnumerable<CachedSteamLoginAccount> accounts)
-    {
-        return accounts
-            .Where(account =>
-                !string.IsNullOrWhiteSpace(account.AccountName) &&
-                !string.IsNullOrWhiteSpace(account.SteamId))
-            .GroupBy(GetAccountKey, StringComparer.OrdinalIgnoreCase)
-            .Select(group => group.First())
-            .ToList();
     }
 
     public void UpdateLoginFiles(
@@ -336,6 +188,111 @@ internal sealed class SteamConfigService
         return created;
     }
 
+    private static CachedSteamLoginAccount? GetActiveLoginAccount(
+        SteamPaths paths,
+        Dictionary<string, object> loginUsers)
+    {
+        var accountId = ReadActiveUserAccountId();
+        if (!accountId.HasValue)
+        {
+            return null;
+        }
+
+        var steamId = ToSteam64(accountId.Value);
+        var accountName = FindAccountNameBySteamId(loginUsers, steamId) ??
+            FindAccountNameBySteamId(Path.Combine(paths.ConfigPath, "config.vdf"), steamId) ??
+            ReadSteamRegistryString("AutoLoginUser");
+
+        if (string.IsNullOrWhiteSpace(accountName))
+        {
+            AppLog.Warn($"Found active Steam user {steamId}, but could not resolve its account name.");
+            return null;
+        }
+
+        return new CachedSteamLoginAccount
+        {
+            AccountName = accountName,
+            SteamId = steamId,
+            CachedAt = DateTimeOffset.Now
+        };
+    }
+
+    private static IEnumerable<CachedSteamLoginAccount> GetLoginUsersAccounts(
+        Dictionary<string, object> loginUsers)
+    {
+        if (!TryGetUsers(loginUsers, out var users))
+        {
+            yield break;
+        }
+
+        foreach (var (steamId, value) in users)
+        {
+            if (value is not Dictionary<string, object> user)
+            {
+                continue;
+            }
+
+            var accountName = GetString(user, "AccountName");
+            if (string.IsNullOrWhiteSpace(accountName) || string.IsNullOrWhiteSpace(steamId))
+            {
+                continue;
+            }
+
+            yield return new CachedSteamLoginAccount
+            {
+                AccountName = accountName,
+                SteamId = steamId,
+                PersonaName = GetString(user, "PersonaName"),
+                CachedAt = DateTimeOffset.Now
+            };
+        }
+    }
+
+    private static IEnumerable<CachedSteamLoginAccount> GetConfigAccounts(string configPath)
+    {
+        var config = VdfDocument.LoadOrEmpty(configPath);
+        var steam = GetPath(config, "InstallConfigStore", "Software", "Valve", "Steam");
+        if (steam is null ||
+            !steam.TryGetValue("Accounts", out var accountsValue) ||
+            accountsValue is not Dictionary<string, object> accounts)
+        {
+            yield break;
+        }
+
+        foreach (var (accountName, value) in accounts)
+        {
+            if (value is not Dictionary<string, object> account)
+            {
+                continue;
+            }
+
+            var steamId = GetString(account, "SteamID");
+            if (string.IsNullOrWhiteSpace(accountName) || string.IsNullOrWhiteSpace(steamId))
+            {
+                continue;
+            }
+
+            yield return new CachedSteamLoginAccount
+            {
+                AccountName = accountName,
+                SteamId = steamId,
+                CachedAt = DateTimeOffset.Now
+            };
+        }
+    }
+
+    private static IReadOnlyList<CachedSteamLoginAccount> NormalizeLoginAccounts(
+        IEnumerable<CachedSteamLoginAccount> accounts)
+    {
+        return accounts
+            .Where(account =>
+                !string.IsNullOrWhiteSpace(account.AccountName) &&
+                !string.IsNullOrWhiteSpace(account.SteamId))
+            .GroupBy(GetAccountKey, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToList();
+    }
+
     private static bool TryGetUsers(
         Dictionary<string, object> loginUsers,
         out Dictionary<string, object> users)
@@ -349,11 +306,6 @@ internal sealed class SteamConfigService
 
         users = [];
         return false;
-    }
-
-    private static bool IsEnabled(Dictionary<string, object> user, string key)
-    {
-        return string.Equals(GetString(user, key), "1", StringComparison.Ordinal);
     }
 
     private static string? GetString(Dictionary<string, object> values, string key)

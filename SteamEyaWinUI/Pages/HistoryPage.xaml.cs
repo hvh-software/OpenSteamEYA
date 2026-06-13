@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Runtime.InteropServices;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
@@ -15,6 +16,24 @@ public sealed partial class HistoryPage : Page
     private readonly ObservableCollection<AccountImportEntry> _importEntries = [];
 
     /// <summary>
+    /// 当前从磁盘加载的完整列表快照（即 AppState.HistoryAccounts）。搜索/过滤只在此内存列表上做，
+    /// 每个键击不再回读磁盘；仅 HistoryChanged 与进入页面时才刷新此快照。
+    /// </summary>
+    private IReadOnlyList<SteamAccountHistoryItem> _allItems = [];
+
+    /// <summary>搜索框去抖计时器：输入停止约 300ms 后才执行一次过滤，避免逐键击全量重建。</summary>
+    private readonly DispatcherQueueTimer _searchDebounceTimer;
+
+    /// <summary>页面是否处于活动（已导航到、未离开）状态，用于不可见时延迟重建。</summary>
+    private bool _isActive;
+
+    /// <summary>
+    /// 不可见期间收到 HistoryChanged 时只更新快照并记下待选中 SteamID（null 表示保持当前选择），
+    /// 不做整列表重建；下次 OnNavigatedTo 经 ReloadHistory 统一重建一次。
+    /// </summary>
+    private string? _pendingSelectSteamId;
+
+    /// <summary>
     /// 对话框流程重入门闩：同一 XamlRoot 同时只能打开一个 ContentDialog，二次 ShowAsync 直接抛异常。
     /// 导入流程在读剪贴板的 await 与 ShowAsync 之间存在挂起窗口，期间再点导入/删除/清空都必须拦下。
     /// </summary>
@@ -26,29 +45,64 @@ public sealed partial class HistoryPage : Page
         HistoryAccountList.ItemsSource = _viewItems;
         ImportDialogList.ItemsSource = _importEntries;
 
+        _searchDebounceTimer = DispatcherQueue.CreateTimer();
+        _searchDebounceTimer.Interval = TimeSpan.FromMilliseconds(300);
+        _searchDebounceTimer.IsRepeating = false;
+        _searchDebounceTimer.Tick += (_, _) => RebuildView(GetSelectedSteamId());
+
         AppState.HistoryChanged += OnHistoryChanged;
         AppState.BusyChanged += _ => UpdateControlsEnabled();
 
         // 取用页面创建前积累的选中意图（首次构造时 _viewItems 为空，GetSelectedSteamId 必为 null）。
         var pending = AppState.PendingHistorySelection;
         AppState.PendingHistorySelection = null;
+        _allItems = AppState.HistoryAccounts;
         RebuildView(pending);
     }
 
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
-        AppState.ReloadHistory(GetSelectedSteamId());
+        _isActive = true;
+
+        // 不可见期间累积的待选中意图优先于当前选择；ReloadHistory 会刷新快照并触发重建。
+        var select = _pendingSelectSteamId ?? GetSelectedSteamId();
+        _pendingSelectSteamId = null;
+        AppState.ReloadHistory(select);
+    }
+
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        base.OnNavigatedFrom(e);
+        _isActive = false;
+        // 停掉去抖计时器，避免离开页面后 300ms 窗口内 Tick 仍对离屏页面触发一次无谓重建。
+        _searchDebounceTimer.Stop();
+    }
+
+    private void CancelHistoryQueryButton_Click(object sender, RoutedEventArgs e)
+    {
+        AppState.ShowStatus("正在取消...", InfoBarSeverity.Informational);
+        AppState.CancelBusyOperation();
     }
 
     private void OnHistoryChanged(string? selectSteamId)
     {
+        // 进入页面时 OnNavigatedTo 触发的 ReloadHistory 会先于此处把 _isActive 置 true，正常重建；
+        // 页面不可见时（其它页触发的后台刷新）只更新内存快照并记下待选中意图，下次 OnNavigatedTo 再重建。
+        _allItems = AppState.HistoryAccounts;
+        if (!_isActive)
+        {
+            _pendingSelectSteamId = selectSteamId ?? _pendingSelectSteamId;
+            return;
+        }
+
         RebuildView(selectSteamId ?? GetSelectedSteamId());
     }
 
     private void RebuildView(string? selectSteamId)
     {
-        var source = AppState.HistoryAccounts;
+        // 过滤只在内存快照上做，不回读磁盘。
+        var source = _allItems;
         var filter = HistorySearchBox.Text.Trim();
         var filtered = string.IsNullOrEmpty(filter)
             ? source
@@ -59,10 +113,11 @@ public sealed partial class HistoryPage : Page
         // 延迟触发的刷新不应把用户进行中的多选打回单选。
         var selectedKeys = HistoryAccountList.SelectedItems
             .OfType<SteamAccountHistoryItem>()
-            .Select(GetSelectionKey)
+            .Select(AccountHistoryService.GetAccountKey)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (!string.IsNullOrWhiteSpace(selectSteamId))
         {
+            // 仅有 SteamID 字符串、无完整账号对象，故直接构造与 GetAccountKey 一致的 "id:" 键。
             selectedKeys.Add($"id:{selectSteamId}");
         }
 
@@ -73,7 +128,7 @@ public sealed partial class HistoryPage : Page
         }
 
         var toSelect = _viewItems
-            .Where(account => selectedKeys.Contains(GetSelectionKey(account)))
+            .Where(account => selectedKeys.Contains(AccountHistoryService.GetAccountKey(account)))
             .ToList();
         if (toSelect.Count <= 1)
         {
@@ -118,7 +173,9 @@ public sealed partial class HistoryPage : Page
     {
         if (args.Reason == AutoSuggestionBoxTextChangeReason.UserInput)
         {
-            RebuildView(GetSelectedSteamId());
+            // 去抖：连续输入只 Start/重置计时器，停止输入约 300ms 后才真正过滤重建。
+            _searchDebounceTimer.Stop();
+            _searchDebounceTimer.Start();
         }
     }
 
@@ -152,7 +209,17 @@ public sealed partial class HistoryPage : Page
 
         try
         {
-            Clipboard.SetContent(package);
+            // 令牌为敏感凭据：不进 Win+V 剪贴板历史、不随云剪贴板漫游。
+            var options = new ClipboardContentOptions
+            {
+                IsAllowedInHistory = false,
+                IsRoamable = false
+            };
+            if (!Clipboard.SetContentWithOptions(package, options))
+            {
+                // 个别系统配置下 SetContentWithOptions 可能返回 false；回退到普通写入保证导出可用。
+                Clipboard.SetContent(package);
+            }
         }
         catch (COMException)
         {
@@ -511,14 +578,6 @@ public sealed partial class HistoryPage : Page
         return HistoryAccountList.SelectedItems.OfType<SteamAccountHistoryItem>().ToList();
     }
 
-    /// <summary>选中态恢复用的账号键，与 AccountHistoryService 的去重键同构（SteamID 优先，缺失退化为账户名）。</summary>
-    private static string GetSelectionKey(SteamAccountHistoryItem account)
-    {
-        return string.IsNullOrWhiteSpace(account.SteamId)
-            ? $"name:{account.AccountName}"
-            : $"id:{account.SteamId}";
-    }
-
     private async void OneClickHistoryQueryButton_Click(object sender, RoutedEventArgs e)
     {
         if (HistoryAccountList.SelectedItem is not SteamAccountHistoryItem account)
@@ -533,15 +592,21 @@ public sealed partial class HistoryPage : Page
             return;
         }
 
-        AppState.SetBusy(true);
+        // 与登录页统一走可取消的忙碌机制：一键查询最长可达上百秒，必须能被取消按钮中断。
+        var cancellationToken = AppState.BeginBusyOperation();
         AppState.ShowStatus($"正在一键查询 {account.AccountTitle} 的账号状态...", InfoBarSeverity.Informational);
 
         try
         {
-            var score = await loginPage.QueryAndSaveCsStatusAsync(account.AccountName, account.EyaToken);
+            var score = await loginPage.QueryAndSaveCsStatusAsync(
+                account.AccountName, account.EyaToken, cancellationToken);
             AppState.ShowStatus(
                 $"{account.AccountTitle} 查询完成：优先分 {score.DisplayText}，CS2等级 {score.PlayerLevelText}，冷却 {score.CooldownText}，GC VAC {score.GcVacText}。",
                 InfoBarSeverity.Success);
+        }
+        catch (OperationCanceledException)
+        {
+            AppState.ShowStatus("已取消一键查询。", InfoBarSeverity.Informational);
         }
         catch (Exception ex)
         {
@@ -549,7 +614,7 @@ public sealed partial class HistoryPage : Page
         }
         finally
         {
-            AppState.SetBusy(false);
+            AppState.EndBusyOperation();
         }
     }
 
@@ -637,6 +702,9 @@ public sealed partial class HistoryPage : Page
         ClearHistoryButton.IsEnabled = !isBusy && AppState.HistoryAccounts.Count > 0;
         OneClickHistoryQueryButton.IsEnabled = !isBusy && selectedCount == 1;
         UseHistoryAccountButton.IsEnabled = !isBusy && selectedCount == 1;
+
+        // 取消按钮仅忙碌时出现且保持可用，让用户中断本页发起的一键查询。
+        CancelHistoryQueryButton.Visibility = isBusy ? Visibility.Visible : Visibility.Collapsed;
 
         SelectionHintText.Text = selectedCount > 1
             ? $"已选 {selectedCount} 项"

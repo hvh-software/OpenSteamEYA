@@ -54,6 +54,21 @@ internal sealed class SteamProcessService
         progress?.Report("Steam 未及时退出，正在结束相关进程...");
         KillProcesses("steam");
         KillProcesses("steamwebhelper");
+
+        for (var i = 0; i < 5; i++)
+        {
+            if (!IsSteamRunning())
+            {
+                AppLog.Info("已强制结束 Steam 相关进程。");
+                return;
+            }
+
+            Thread.Sleep(1000);
+        }
+
+        // 不中止会导致旧 Steam 退出时回写 loginusers.vdf 覆盖新配置，表现为"上号成功但没切账号"。
+        AppLog.Error("强制结束后 Steam 进程仍在运行，中止上号流程。");
+        throw new InvalidOperationException("无法结束正在运行的 Steam（可能以管理员权限运行）。请手动退出 Steam 后重试。");
     }
 
     public void LaunchSteamWithLogin(SteamPaths paths, string accountName)
@@ -112,9 +127,11 @@ internal sealed class SteamProcessService
                     process.Kill(true);
                     process.WaitForExit(3000);
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // Best effort. The caller will surface launch/write failures if Steam keeps files locked.
+                    // 单个进程结束失败（典型为 Steam 以管理员权限运行导致 Access Denied）不在此抛出，
+                    // 由调用方复查存活情况统一处理。
+                    AppLog.Warn($"结束进程 {processName}（PID={process.Id}）失败：{ex.Message}");
                 }
             }
         }

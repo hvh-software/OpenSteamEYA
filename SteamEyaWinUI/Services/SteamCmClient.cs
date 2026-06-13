@@ -65,6 +65,7 @@ internal sealed class SteamCmClient : IAsyncDisposable
     private const int ClientOsWindows10 = 16;
     private const int WebSocketBufferSize = 64 * 1024;
     private const int RequestTimeoutMs = 15_000;
+    private const int ConnectTimeoutMs = 10_000;
 
     private const int EMsgMulti = 1;
     private const int EMsgServiceMethodCallFromClient = 151;
@@ -366,7 +367,20 @@ internal sealed class SteamCmClient : IAsyncDisposable
         _socket = new ClientWebSocket();
         _socket.Options.KeepAliveInterval = TimeSpan.FromSeconds(30);
 
-        await _socket.ConnectAsync(new Uri($"wss://{endpoint}/cmsocket/"), cancellationToken);
+        // 不回包的 CM 会让 ConnectAsync 挂起数分钟，必须按单个 endpoint 限时；
+        // 超时抛 TimeoutException（而非 OperationCanceledException），
+        // 让 ConnectAndLogOnAsync 的重试循环继续尝试下一个 CM。
+        using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        connectCts.CancelAfter(ConnectTimeoutMs);
+
+        try
+        {
+            await _socket.ConnectAsync(new Uri($"wss://{endpoint}/cmsocket/"), connectCts.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException($"连接 Steam CM {endpoint} 超时。");
+        }
 
         _receiveTask = Task.Run(
             () => ReceiveLoopAsync(_receiveCancellation.Token),
@@ -615,7 +629,8 @@ internal sealed class SteamCmClient : IAsyncDisposable
             _jobs.TryRemove(header.JobIdTarget.Value, out var job))
         {
             job.TrySetResult(new ServiceMethodResponse(
-                header.Result ?? (int)SteamEresult.Ok,
+                // proto 定义为 optional int32 eresult = 13 [default = 2]，缺省语义是 Fail=2
+                header.Result ?? 2,
                 header.ErrorMessage,
                 body));
             return;
