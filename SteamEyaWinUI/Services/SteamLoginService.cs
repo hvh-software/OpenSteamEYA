@@ -39,6 +39,7 @@ internal sealed class SteamLoginService
                 cachedAccountCandidates = _steamConfigService.GetLoginAccounts(paths);
             }
 
+            _loginCacheService.MarkEyaLogin(accountName, token.SteamId);
             CacheLoginAccounts(cachedAccountCandidates, accountName, token.SteamId);
             _steamConfigService.UpdateLoginFiles(
                 paths,
@@ -60,22 +61,11 @@ internal sealed class SteamLoginService
         }
     }
 
-    public CachedSteamLoginAccount? GetCachedLoginAccount()
-    {
-        return _loginCacheService.Load();
-    }
-
     public IReadOnlyList<CachedSteamLoginAccount> GetCachedLoginAccounts()
     {
-        return _loginCacheService.LoadAll();
-    }
-
-    public CachedSteamLoginAccount RestoreCachedLogin(IProgress<string>? progress = null)
-    {
-        var account = _loginCacheService.Load()
-            ?? throw new InvalidOperationException("没有可恢复的缓存 Steam 账号。");
-
-        return RestoreCachedLogin(account, progress);
+        return _loginCacheService.LoadAll()
+            .Where(account => !IsKnownEyaAccount(account))
+            .ToList();
     }
 
     public CachedSteamLoginAccount RestoreCachedLogin(
@@ -164,6 +154,11 @@ internal sealed class SteamLoginService
     {
         try
         {
+            if (_loginCacheService.IsEyaLogin(account))
+            {
+                return true;
+            }
+
             return _accountHistoryService.Load().Any(historyAccount =>
                 string.Equals(historyAccount.SteamId, account.SteamId, StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(historyAccount.AccountName, account.AccountName, StringComparison.OrdinalIgnoreCase));

@@ -629,6 +629,29 @@ public sealed partial class HistoryPage : Page
         MainWindow.Instance?.LoadAccountIntoLogin(account);
     }
 
+    private async void LoginHistoryAccountButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (HistoryAccountList.SelectedItem is not SteamAccountHistoryItem account)
+        {
+            AppState.ShowStatus("请选择历史账号。", InfoBarSeverity.Error);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(account.EyaToken))
+        {
+            AppState.ShowStatus("该历史账号没有 EYA 令牌，无法一键登录。", InfoBarSeverity.Error);
+            return;
+        }
+
+        if (AppState.LoginPage is not { } loginPage)
+        {
+            AppState.ShowStatus("登录页尚未初始化，请先打开登录页。", InfoBarSeverity.Error);
+            return;
+        }
+
+        await loginPage.LoginHistoryAccountAsync(account);
+    }
+
     private string? GetSelectedSteamId()
     {
         return HistoryAccountList.SelectedItem is SteamAccountHistoryItem account
@@ -701,6 +724,7 @@ public sealed partial class HistoryPage : Page
         DeleteHistoryButton.IsEnabled = !isBusy && selectedCount > 0;
         ClearHistoryButton.IsEnabled = !isBusy && AppState.HistoryAccounts.Count > 0;
         OneClickHistoryQueryButton.IsEnabled = !isBusy && selectedCount == 1;
+        LoginHistoryAccountButton.IsEnabled = !isBusy && selectedCount == 1;
         UseHistoryAccountButton.IsEnabled = !isBusy && selectedCount == 1;
 
         // 取消按钮仅忙碌时出现且保持可用，让用户中断本页发起的一键查询。

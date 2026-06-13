@@ -30,19 +30,45 @@ internal sealed class SteamLoginCacheService
 
     public string AvatarFolderPath { get; }
 
-    public CachedSteamLoginAccount? Load()
-    {
-        return LoadAll().FirstOrDefault();
-    }
-
     public IReadOnlyList<CachedSteamLoginAccount> LoadAll()
     {
         return NormalizeAccounts(ReadDocument().Accounts);
     }
 
-    public void Save(CachedSteamLoginAccount account)
+    public void MarkEyaLogin(string accountName, string steamId)
     {
-        SaveMany([account]);
+        var marker = new CachedSteamLoginAccount
+        {
+            AccountName = accountName.Trim(),
+            SteamId = steamId.Trim(),
+            CachedAt = DateTimeOffset.Now
+        };
+
+        if (!IsUsable(marker))
+        {
+            return;
+        }
+
+        var document = ReadDocument();
+        var existing = FindExisting(document.EyaAccounts, marker);
+        if (existing is null)
+        {
+            document.EyaAccounts.Add(marker);
+        }
+        else
+        {
+            existing.AccountName = marker.AccountName;
+            existing.SteamId = marker.SteamId;
+            existing.CachedAt = marker.CachedAt;
+        }
+
+        document.EyaAccounts = NormalizeAccounts(document.EyaAccounts).ToList();
+        WriteDocument(document);
+    }
+
+    public bool IsEyaLogin(CachedSteamLoginAccount account)
+    {
+        return FindExisting(ReadDocument().EyaAccounts, account) is not null;
     }
 
     public IReadOnlyList<CachedSteamLoginAccount> SaveMany(IEnumerable<CachedSteamLoginAccount> accounts)
@@ -92,7 +118,7 @@ internal sealed class SteamLoginCacheService
     {
         var targets = accounts
             .Where(IsUsable)
-            .GroupBy(GetAccountKey, StringComparer.OrdinalIgnoreCase)
+            .GroupBy(account => account.CacheKey, StringComparer.OrdinalIgnoreCase)
             .Select(group => group.First())
             .ToList();
 
@@ -155,9 +181,9 @@ internal sealed class SteamLoginCacheService
             return 0;
         }
 
-        var keys = accounts.Select(GetAccountKey).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var keys = accounts.Select(account => account.CacheKey).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var document = ReadDocument();
-        var removed = document.Accounts.RemoveAll(account => keys.Contains(GetAccountKey(account)));
+        var removed = document.Accounts.RemoveAll(account => keys.Contains(account.CacheKey));
         document.Accounts = NormalizeAccounts(document.Accounts).ToList();
         WriteDocument(document);
 
@@ -178,7 +204,10 @@ internal sealed class SteamLoginCacheService
             TryDeleteFile(account.AvatarPath);
         }
 
-        WriteDocument(new CachedSteamLoginDocument());
+        WriteDocument(new CachedSteamLoginDocument
+        {
+            EyaAccounts = NormalizeAccounts(document.EyaAccounts).ToList()
+        });
         return count;
     }
 
@@ -201,6 +230,7 @@ internal sealed class SteamLoginCacheService
                     SteamLoginCacheJsonContext.Default.CachedSteamLoginDocument)
                     ?? new CachedSteamLoginDocument();
                 document.Accounts ??= [];
+                document.EyaAccounts ??= [];
                 return document;
             }
 
@@ -244,7 +274,7 @@ internal sealed class SteamLoginCacheService
         CachedSteamLoginAccount target)
     {
         return accounts.FirstOrDefault(account =>
-            string.Equals(GetAccountKey(account), GetAccountKey(target), StringComparison.OrdinalIgnoreCase));
+            string.Equals(account.CacheKey, target.CacheKey, StringComparison.OrdinalIgnoreCase));
     }
 
     private static IReadOnlyList<CachedSteamLoginAccount> NormalizeAccounts(
@@ -252,17 +282,10 @@ internal sealed class SteamLoginCacheService
     {
         return accounts
             .Where(IsUsable)
-            .GroupBy(GetAccountKey, StringComparer.OrdinalIgnoreCase)
+            .GroupBy(account => account.CacheKey, StringComparer.OrdinalIgnoreCase)
             .Select(group => group.OrderByDescending(account => account.CachedAt).First())
             .OrderByDescending(account => account.CachedAt)
             .ToList();
-    }
-
-    private static string GetAccountKey(CachedSteamLoginAccount account)
-    {
-        return string.IsNullOrWhiteSpace(account.SteamId)
-            ? $"name:{account.AccountName}"
-            : $"id:{account.SteamId}";
     }
 
     private static bool IsUsable(CachedSteamLoginAccount? account)
@@ -396,6 +419,8 @@ internal sealed class CachedSteamLoginDocument
     public int Version { get; set; } = 1;
 
     public List<CachedSteamLoginAccount> Accounts { get; set; } = [];
+
+    public List<CachedSteamLoginAccount> EyaAccounts { get; set; } = [];
 }
 
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, WriteIndented = true)]

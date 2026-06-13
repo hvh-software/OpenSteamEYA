@@ -129,26 +129,10 @@ public sealed partial class LoginPage : Page
         var cancellationToken = AppState.BeginBusyOperation();
         ShowStatus("正在处理登录...", InfoBarSeverity.Informational);
 
-        var progress = new Progress<string>(message =>
-            ShowStatus(message, InfoBarSeverity.Informational));
-
         try
         {
             var (accountName, eyaToken) = await GetCredentialsAsync();
-            EnsureTokenValidForAction(eyaToken, "登录到 Steam");
-            UpdateAccountInfo(accountName, eyaToken);
-            // 这一次抓取的 persona/头像直接传给 SaveLoginAsync，避免历史保存时重复抓取一遍。
-            var profile = await UpdateAccountProfileAsync(accountName, eyaToken);
-            await EnsureTokenAcceptedBySteamAsync(eyaToken, "登录到 Steam", cancellationToken);
-            var result = await Task.Run(
-                () => AppState.LoginService.Login(accountName, eyaToken, progress),
-                cancellationToken);
-            var historyStatus = await SaveLoginHistoryAsync(result, eyaToken, profile);
-            ShowStatus(
-                $"登录已启动。SteamID: {result.SteamId}，令牌剩余 {FormatHelper.FormatRemaining(result.Remaining)}{historyStatus}。",
-                historyStatus.StartsWith("，但", StringComparison.Ordinal)
-                    ? InfoBarSeverity.Warning
-                    : InfoBarSeverity.Success);
+            await LoginWithCredentialsAsync(accountName, eyaToken, cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -163,6 +147,60 @@ public sealed partial class LoginPage : Page
         {
             AppState.EndBusyOperation();
         }
+    }
+
+    public async Task LoginHistoryAccountAsync(SteamAccountHistoryItem account)
+    {
+        var cancellationToken = AppState.BeginBusyOperation();
+        ShowStatus($"正在登录历史账号 {account.AccountTitle}...", InfoBarSeverity.Informational);
+
+        try
+        {
+            ModeSelector.SelectedItem = ManualModeItem;
+            AccountNameBox.Text = account.AccountName;
+            EyaTokenBox.Text = account.EyaToken;
+            UpdateAccountInfo(account.AccountName, account.EyaToken);
+            ApplyAccountInfoProfile(account);
+
+            await LoginWithCredentialsAsync(account.AccountName, account.EyaToken, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            ShowStatus("已取消登录。", InfoBarSeverity.Informational);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("历史账号一键登录失败。", ex);
+            ShowStatus($"{ex.Message}（诊断日志：{AppLog.LogFilePath}）", InfoBarSeverity.Error);
+        }
+        finally
+        {
+            AppState.EndBusyOperation();
+        }
+    }
+
+    private async Task LoginWithCredentialsAsync(
+        string accountName,
+        string eyaToken,
+        CancellationToken cancellationToken)
+    {
+        var progress = new Progress<string>(message =>
+            ShowStatus(message, InfoBarSeverity.Informational));
+
+        EnsureTokenValidForAction(eyaToken, "登录到 Steam");
+        UpdateAccountInfo(accountName, eyaToken);
+        // 这一次抓取的 persona/头像直接传给 SaveLoginAsync，避免历史保存时重复抓取一遍。
+        var profile = await UpdateAccountProfileAsync(accountName, eyaToken);
+        await EnsureTokenAcceptedBySteamAsync(eyaToken, "登录到 Steam", cancellationToken);
+        var result = await Task.Run(
+            () => AppState.LoginService.Login(accountName, eyaToken, progress),
+            cancellationToken);
+        var historyStatus = await SaveLoginHistoryAsync(result, eyaToken, profile);
+        ShowStatus(
+            $"登录已启动。SteamID: {result.SteamId}，令牌剩余 {FormatHelper.FormatRemaining(result.Remaining)}{historyStatus}。",
+            historyStatus.StartsWith("，但", StringComparison.Ordinal)
+                ? InfoBarSeverity.Warning
+                : InfoBarSeverity.Success);
     }
 
     private async void ResolveLicenseButton_Click(object sender, RoutedEventArgs e)

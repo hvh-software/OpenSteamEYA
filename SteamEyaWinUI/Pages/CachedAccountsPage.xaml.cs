@@ -11,6 +11,7 @@ public sealed partial class CachedAccountsPage : Page
 {
     private readonly ObservableCollection<CachedSteamLoginAccount> _viewItems = [];
     private IReadOnlyList<CachedSteamLoginAccount> _sourceItems = [];
+    private bool _isDialogFlowActive;
 
     public CachedAccountsPage()
     {
@@ -41,7 +42,7 @@ public sealed partial class CachedAccountsPage : Page
 
         var selectedKeys = CachedAccountList.SelectedItems
             .OfType<CachedSteamLoginAccount>()
-            .Select(GetAccountKey)
+            .Select(account => account.CacheKey)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (!string.IsNullOrWhiteSpace(selectKey))
         {
@@ -55,7 +56,7 @@ public sealed partial class CachedAccountsPage : Page
         }
 
         var toSelect = _viewItems
-            .Where(account => selectedKeys.Contains(GetAccountKey(account)))
+            .Where(account => selectedKeys.Contains(account.CacheKey))
             .ToList();
         if (toSelect.Count <= 1)
         {
@@ -149,7 +150,7 @@ public sealed partial class CachedAccountsPage : Page
         try
         {
             var restored = await Task.Run(() => AppState.LoginService.RestoreCachedLogin(account, progress));
-            Reload(GetAccountKey(restored));
+            Reload(restored.CacheKey);
             AppState.ShowStatus(
                 $"已请求恢复缓存账号：{restored.AccountName}（SteamID: {restored.SteamId}）。",
                 InfoBarSeverity.Success);
@@ -165,8 +166,13 @@ public sealed partial class CachedAccountsPage : Page
         }
     }
 
-    private void DeleteCachedButton_Click(object sender, RoutedEventArgs e)
+    private async void DeleteCachedButton_Click(object sender, RoutedEventArgs e)
     {
+        if (_isDialogFlowActive)
+        {
+            return;
+        }
+
         var accounts = GetSelectedAccounts();
         if (accounts.Count == 0)
         {
@@ -174,22 +180,86 @@ public sealed partial class CachedAccountsPage : Page
             return;
         }
 
-        var removed = AppState.LoginService.DeleteCachedLoginAccounts(accounts);
-        Reload();
-        AppState.ShowStatus($"已删除 {removed} 个缓存账号。", InfoBarSeverity.Success);
+        var nameText = string.Join("、", accounts.Take(5).Select(account => account.AccountTitle));
+        var summary = accounts.Count > 5
+            ? $"将删除 {nameText} 等 {accounts.Count} 个缓存账号，仅移除本地缓存记录与头像。"
+            : $"将删除 {nameText}（共 {accounts.Count} 个），仅移除本地缓存记录与头像。";
+
+        var dialog = new ContentDialog
+        {
+            Title = "删除缓存账号",
+            Content = summary,
+            PrimaryButtonText = "删除",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = XamlRoot
+        };
+
+        _isDialogFlowActive = true;
+        try
+        {
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+            {
+                return;
+            }
+
+            var removed = AppState.LoginService.DeleteCachedLoginAccounts(accounts);
+            Reload();
+            AppState.ShowStatus($"已删除 {removed} 个缓存账号。", InfoBarSeverity.Success);
+        }
+        catch (Exception ex)
+        {
+            AppState.ShowStatus($"删除失败：{ex.Message}", InfoBarSeverity.Error);
+        }
+        finally
+        {
+            _isDialogFlowActive = false;
+        }
     }
 
-    private void ClearCachedButton_Click(object sender, RoutedEventArgs e)
+    private async void ClearCachedButton_Click(object sender, RoutedEventArgs e)
     {
+        if (_isDialogFlowActive)
+        {
+            return;
+        }
+
         if (_sourceItems.Count == 0)
         {
             AppState.ShowStatus("没有可清空的缓存账号。", InfoBarSeverity.Error);
             return;
         }
 
-        var cleared = AppState.LoginService.ClearCachedLoginAccounts();
-        Reload();
-        AppState.ShowStatus($"已清空 {cleared} 个缓存账号。", InfoBarSeverity.Success);
+        var dialog = new ContentDialog
+        {
+            Title = "清空缓存账号",
+            Content = $"将清空全部 {_sourceItems.Count} 个缓存账号并删除头像缓存，此操作不可恢复。",
+            PrimaryButtonText = "清空",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = XamlRoot
+        };
+
+        _isDialogFlowActive = true;
+        try
+        {
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+            {
+                return;
+            }
+
+            var cleared = AppState.LoginService.ClearCachedLoginAccounts();
+            Reload();
+            AppState.ShowStatus($"已清空 {cleared} 个缓存账号。", InfoBarSeverity.Success);
+        }
+        catch (Exception ex)
+        {
+            AppState.ShowStatus($"清空失败：{ex.Message}", InfoBarSeverity.Error);
+        }
+        finally
+        {
+            _isDialogFlowActive = false;
+        }
     }
 
     private List<CachedSteamLoginAccount> GetSelectedAccounts()
@@ -200,15 +270,8 @@ public sealed partial class CachedAccountsPage : Page
     private string? GetSelectedKey()
     {
         return CachedAccountList.SelectedItem is CachedSteamLoginAccount account
-            ? GetAccountKey(account)
+            ? account.CacheKey
             : null;
-    }
-
-    private static string GetAccountKey(CachedSteamLoginAccount account)
-    {
-        return string.IsNullOrWhiteSpace(account.SteamId)
-            ? $"name:{account.AccountName}"
-            : $"id:{account.SteamId}";
     }
 
     private void UpdateDetail()
@@ -256,8 +319,8 @@ public sealed partial class CachedAccountsPage : Page
         CachedAccountList.IsEnabled = !isBusy && _viewItems.Count > 0;
         CachedSearchBox.IsEnabled = !isBusy;
         RefreshCachedButton.IsEnabled = !isBusy;
-        DeleteCachedButton.IsEnabled = !isBusy && selectedCount > 0;
-        ClearCachedButton.IsEnabled = !isBusy && _sourceItems.Count > 0;
+        DeleteCachedButton.IsEnabled = !isBusy && !_isDialogFlowActive && selectedCount > 0;
+        ClearCachedButton.IsEnabled = !isBusy && !_isDialogFlowActive && _sourceItems.Count > 0;
         RestoreSelectedCachedButton.IsEnabled = !isBusy && selectedCount == 1;
 
         CachedSelectionHintText.Text = selectedCount > 1

@@ -18,6 +18,9 @@ public sealed partial class CachedSteamLoginAccount
     public DateTimeOffset CachedAt { get; set; }
 
     [JsonIgnore]
+    public string CacheKey => string.IsNullOrWhiteSpace(SteamId) ? $"name:{AccountName}" : $"id:{SteamId}";
+
+    [JsonIgnore]
     public string AccountTitle => string.IsNullOrWhiteSpace(AccountName) ? "未知账号" : AccountName;
 
     [JsonIgnore]

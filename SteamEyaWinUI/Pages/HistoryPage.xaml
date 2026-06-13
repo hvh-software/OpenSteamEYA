@@ -338,6 +338,17 @@
                             </StackPanel>
                         </Button>
 
+                        <Button
+                            x:Name="LoginHistoryAccountButton"
+                            HorizontalAlignment="Stretch"
+                            Style="{StaticResource AccentButtonStyle}"
+                            Click="LoginHistoryAccountButton_Click">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xE8E5;" FontSize="16" />
+                                <TextBlock Text="一键登录" />
+                            </StackPanel>
+                        </Button>
+
                         <!-- 取消按钮仅忙碌时可见；UpdateControlsEnabled 不禁用它，busy 期间始终可点。 -->
                         <Button
                             x:Name="CancelHistoryQueryButton"
@@ -354,7 +365,6 @@
                         <Button
                             x:Name="UseHistoryAccountButton"
                             HorizontalAlignment="Stretch"
-                            Style="{StaticResource AccentButtonStyle}"
                             Click="UseHistoryAccountButton_Click">
                             <StackPanel Orientation="Horizontal" Spacing="8">
                                 <FontIcon Glyph="&#xE8E5;" FontSize="16" />

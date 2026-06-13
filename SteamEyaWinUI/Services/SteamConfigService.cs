@@ -288,7 +288,7 @@ internal sealed class SteamConfigService
             .Where(account =>
                 !string.IsNullOrWhiteSpace(account.AccountName) &&
                 !string.IsNullOrWhiteSpace(account.SteamId))
-            .GroupBy(GetAccountKey, StringComparer.OrdinalIgnoreCase)
+            .GroupBy(account => account.CacheKey, StringComparer.OrdinalIgnoreCase)
             .Select(group => group.First())
             .ToList();
     }
@@ -311,13 +311,6 @@ internal sealed class SteamConfigService
     private static string? GetString(Dictionary<string, object> values, string key)
     {
         return values.TryGetValue(key, out var value) ? value?.ToString() : null;
-    }
-
-    private static string GetAccountKey(CachedSteamLoginAccount account)
-    {
-        return string.IsNullOrWhiteSpace(account.SteamId)
-            ? $"name:{account.AccountName}"
-            : $"id:{account.SteamId}";
     }
 
     private static uint? ReadActiveUserAccountId()
