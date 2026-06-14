@@ -89,6 +89,13 @@ internal sealed class AppSettings
     /// <summary>主题：Default（跟随系统）/ Light / Dark。</summary>
     public string Theme { get; set; } = "Default";
 
+    /// <summary>
+    /// 已解析并持久化的 Steam 安装目录（含 steam.exe 的根目录）。首次启动自动检测后写入，之后直接复用，
+    /// 不必每次上号重新检测。null/空表示尚未解析；失效（目录里找不到 steam.exe）时会重新自动检测，
+    /// 仍找不到则弹框让用户手动选择。详见 <see cref="SteamPathCoordinator"/>。
+    /// </summary>
+    public string? SteamInstallPath { get; set; }
+
     /// <summary>唯一的 CS2 配装预设，供装备页面编辑与登录页一键装配。新用户用项目内置默认配装。</summary>
     public CsLoadoutPreset Loadout { get; set; } = CsLoadoutPreset.Default();
 }

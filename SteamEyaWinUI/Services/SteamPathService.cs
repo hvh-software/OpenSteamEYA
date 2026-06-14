@@ -7,11 +7,14 @@ namespace SteamEyaWinUI.Services;
 
 internal sealed class SteamPathService
 {
-    public SteamPaths GetSteamPaths()
+    /// <summary>
+    /// 自动探测 Steam 安装目录：按候选源顺序返回第一个确实含 steam.exe 的目录；都找不到则返回 null
+    /// （不再退回「存在但没有 steam.exe」的残留目录——那只会把清晰的失败拖到启动 steam.exe 时才暴露）。
+    /// 解析/缓存/失败弹框的总编排见 <see cref="SteamPathCoordinator"/>。
+    /// </summary>
+    public string? AutoDetectInstallPath()
     {
-        AppLog.Info("开始定位 Steam 安装目录。");
-        string? installPath = null;
-        string? firstExistingPath = null;
+        AppLog.Info("开始自动探测 Steam 安装目录。");
 
         foreach (var (source, candidate) in EnumerateInstallPathCandidates())
         {
@@ -22,36 +25,105 @@ internal sealed class SteamPathService
             }
 
             var directory = candidate.Trim().TrimEnd('\\', '/');
-            var exists = Directory.Exists(directory);
-            var hasExe = exists && File.Exists(Path.Combine(directory, "steam.exe"));
-            AppLog.Info($"  候选[{source}]：\"{directory}\" 存在={exists} 含steam.exe={hasExe}");
+            var hasExe = ContainsSteamExe(directory);
+            AppLog.Info($"  候选[{source}]：\"{directory}\" 含steam.exe={hasExe}");
 
-            if (!exists)
-            {
-                continue;
-            }
-
-            firstExistingPath ??= directory;
-
-            // 优先选真正含 steam.exe 的目录，避免命中搬迁/重装后残留的空目录。
             if (hasExe)
             {
-                installPath = directory;
-                break;
+                AppLog.Info($"自动探测选定 Steam 安装目录：\"{directory}\"");
+                return directory;
             }
         }
 
-        installPath ??= firstExistingPath;
-        if (string.IsNullOrWhiteSpace(installPath))
+        AppLog.Warn("未能自动探测到含 steam.exe 的 Steam 安装目录。");
+        return null;
+    }
+
+    /// <summary>目录是否是有效的 Steam 安装根目录（存在且含 steam.exe）。空路径或异常一律视为否。</summary>
+    public static bool ContainsSteamExe(string? directory)
+    {
+        if (string.IsNullOrWhiteSpace(directory))
         {
-            AppLog.Error("未找到任何存在的 Steam 安装目录（所有候选均不存在）。");
-            throw new InvalidOperationException(Loc.T("Steam_Error_InstallDirNotFound"));
+            return false;
         }
 
-        var usedFallback = !File.Exists(Path.Combine(installPath, "steam.exe"));
-        AppLog.Info(
-            $"选定 Steam 安装目录：\"{installPath}\"{(usedFallback ? "（回退：该目录无 steam.exe）" : string.Empty)}");
+        try
+        {
+            return File.Exists(Path.Combine(directory.Trim().TrimEnd('\\', '/'), "steam.exe"));
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
+    /// <summary>
+    /// 把路径规整成磁盘上的真实大小写 + 反斜杠。HKCU\Software\Valve\Steam\SteamPath 是
+    /// 全小写正斜杠（如 c:/program files (x86)/steam），直接显示很别扭。逐段用目录枚举取真实大小写；
+    /// 取不到（段不存在/无权限）则至少修正分隔符并大写盘符。Windows 路径大小写不敏感，仅为美观/一致。
+    /// </summary>
+    public static string NormalizeInstallPath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return path;
+        }
+
+        var normalized = FixSeparators(path);
+        try
+        {
+            var root = Path.GetPathRoot(normalized);
+            if (string.IsNullOrEmpty(root))
+            {
+                return normalized;
+            }
+
+            var current = root.ToUpperInvariant(); // 盘符大写：c:\ → C:\
+            foreach (var segment in normalized[root.Length..]
+                         .Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var realName = segment;
+                try
+                {
+                    var matches = new DirectoryInfo(current).GetFileSystemInfos(segment);
+                    if (matches.Length > 0)
+                    {
+                        realName = matches[0].Name; // 磁盘上的真实大小写
+                    }
+                }
+                catch
+                {
+                    // 段不存在/无权限/含通配符——保留原样继续。
+                }
+
+                current = Path.Combine(current, realName);
+            }
+
+            return current.TrimEnd('\\');
+        }
+        catch
+        {
+            return normalized;
+        }
+
+        static string FixSeparators(string p)
+        {
+            var trimmed = p.Trim().TrimEnd('\\', '/');
+            try
+            {
+                // GetFullPath 把正斜杠转反斜杠并规整；大小写不变。
+                return Path.GetFullPath(trimmed).TrimEnd('\\');
+            }
+            catch
+            {
+                return trimmed.Replace('/', '\\');
+            }
+        }
+    }
+
+    /// <summary>由已确定的安装目录构造完整路径集合（config 目录 + local.vdf）。</summary>
+    public SteamPaths BuildPaths(string installPath)
+    {
         var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         if (string.IsNullOrWhiteSpace(localAppData))
         {
@@ -59,11 +131,12 @@ internal sealed class SteamPathService
             throw new InvalidOperationException(Loc.T("Steam_Error_LocalAppDataNotFound"));
         }
 
+        var normalized = installPath.Trim().TrimEnd('\\', '/');
         var paths = new SteamPaths(
-            installPath,
+            normalized,
             Path.Combine(localAppData, "Steam", "local.vdf"),
-            Path.Combine(installPath, "config"));
-        AppLog.Info($"config 目录=\"{paths.ConfigPath}\"  local.vdf=\"{paths.LocalVdfPath}\"");
+            Path.Combine(normalized, "config"));
+        AppLog.Info($"使用 Steam 安装目录=\"{normalized}\"  config 目录=\"{paths.ConfigPath}\"  local.vdf=\"{paths.LocalVdfPath}\"");
         return paths;
     }
 

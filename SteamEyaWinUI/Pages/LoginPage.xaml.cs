@@ -217,6 +217,13 @@ public sealed partial class LoginPage : Page, INotifyPropertyChanged
 
     private async void LoginButton_Click(object sender, RoutedEventArgs e)
     {
+        // 首次会自动检测并持久化 Steam 路径；失效则重新检测；都不行才弹框让用户选。用户取消即中止上号。
+        if (!await SteamPathCoordinator.EnsureResolvedAsync())
+        {
+            ShowStatus(Loc.T("SteamPath_Status_Required"), InfoBarSeverity.Warning);
+            return;
+        }
+
         var cancellationToken = AppState.BeginBusyOperation();
         ShowStatus(Loc.T("Login_Status_Processing"), InfoBarSeverity.Informational);
 
@@ -267,6 +274,13 @@ public sealed partial class LoginPage : Page, INotifyPropertyChanged
         IProgress<string> progress,
         CancellationToken cancellationToken)
     {
+        // 与「登录到 Steam」一致：先确保 Steam 路径已解析（首启检测/持久化/失效重测/弹框）。
+        // 用户取消选择视为取消上号，交由调用方按 OperationCanceledException 给出中性提示。
+        if (!await SteamPathCoordinator.EnsureResolvedAsync())
+        {
+            throw new OperationCanceledException();
+        }
+
         eyaToken = FormatHelper.NormalizeToken(eyaToken);
         EnsureTokenValidForAction(eyaToken, "Login_Action_Login");
         UpdateAccountInfo(accountName, eyaToken);

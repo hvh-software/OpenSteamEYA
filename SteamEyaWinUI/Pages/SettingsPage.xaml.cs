@@ -55,6 +55,9 @@ public sealed partial class SettingsPage : Page, INotifyPropertyChanged
                 ThemeComboBox.SelectedItem = theme;
                 _syncing = false;
             }
+
+            // 未设置时 SteamPathText 显示的是本地化占位文案，需随语言刷新（已设置时是中性路径，刷新无副作用）。
+            UpdateSteamPathText();
         });
     }
 
@@ -89,6 +92,13 @@ public sealed partial class SettingsPage : Page, INotifyPropertyChanged
         }
 
         DataFolderPathText.Text = AppState.SettingsService.AppFolderPath;
+        UpdateSteamPathText();
+    }
+
+    /// <summary>显示当前持久化的 Steam 安装目录；未设置时显示占位文案（启动会自动检测）。</summary>
+    private void UpdateSteamPathText()
+    {
+        SteamPathText.Text = SteamPathCoordinator.GetPersistedInstallPath() ?? Loc.T("Settings_SteamPath_NotSet");
     }
 
     private static ComboBoxItem? FindByTag(ComboBox combo, string tag) =>
@@ -124,6 +134,16 @@ public sealed partial class SettingsPage : Page, INotifyPropertyChanged
             "Dark" => ElementTheme.Dark,
             _ => ElementTheme.Default
         });
+    }
+
+    /// <summary>手动更改上号使用的 Steam 安装目录（多 Steam 时指定要用哪一个）。选择器+校验+持久化都在协调器里。</summary>
+    private async void ChangeSteamPathButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (await SteamPathCoordinator.PickAndPersistManuallyAsync())
+        {
+            UpdateSteamPathText();
+            AppState.ShowStatus(Loc.T("Settings_SteamPath_Changed"), InfoBarSeverity.Success);
+        }
     }
 
     private void OpenDataFolderButton_Click(object sender, RoutedEventArgs e)

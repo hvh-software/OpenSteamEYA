@@ -6,7 +6,6 @@ namespace SteamEyaWinUI.Services;
 internal sealed class SteamLoginService
 {
     private readonly JwtTokenService _jwtTokenService = new();
-    private readonly SteamPathService _steamPathService = new();
     private readonly SteamCryptoService _steamCryptoService = new();
     private readonly SteamConfigService _steamConfigService = new();
     private readonly SteamProcessService _steamProcessService = new();
@@ -24,7 +23,7 @@ internal sealed class SteamLoginService
             AppLog.Info($"EYA 令牌校验通过：SteamID={token.SteamId} 过期={token.ExpiresAt:yyyy-MM-dd HH:mm:ss}");
 
             progress?.Report(Loc.T("Steam_Progress_LocatingInstall"));
-            var paths = _steamPathService.GetSteamPaths();
+            var paths = SteamPathCoordinator.ResolvePathsOrThrow();
             var cachedAccountCandidates = _steamConfigService.GetLoginAccounts(paths);
 
             progress?.Report(Loc.T("Steam_Progress_EncryptingToken"));
@@ -78,7 +77,7 @@ internal sealed class SteamLoginService
         try
         {
             progress?.Report(Loc.T("Steam_Progress_LocatingInstall"));
-            var paths = _steamPathService.GetSteamPaths();
+            var paths = SteamPathCoordinator.ResolvePathsOrThrow();
 
             _steamProcessService.EnsureSteamStopped(paths, progress);
 

@@ -25,6 +25,9 @@ public sealed partial class MainWindow : Window
 
     public static MainWindow? Instance { get; private set; }
 
+    /// <summary>主窗口句柄，供文件/目录选择器等 WinRT 互操作（InitializeWithWindow）使用；在 ConfigureWindowSize 中赋值。</summary>
+    public static nint Hwnd => s_hwnd;
+
     public MainWindow()
     {
         Instance = this;
@@ -50,7 +53,25 @@ public sealed partial class MainWindow : Window
         AppState.ReloadHistory();
         RootNavigationView.SelectedItem = LoginNavItem;
 
+        // 首次启动即解析并持久化 Steam 安装路径（之后上号直接复用，不再每次探测）。
+        // 等内容进入可视树（XamlRoot 就绪）后再跑，检测失败才需要弹框。
+        RootNavigationView.Loaded += OnRootNavigationViewLoaded;
+
         _ = AppState.CheckForUpdatesAsync(isAutomatic: true);
+    }
+
+    // 启动时解析 Steam 路径：成功则静默持久化；自动检测失败时弹框让用户手动选择含 steam.exe 的目录。
+    private async void OnRootNavigationViewLoaded(object sender, RoutedEventArgs e)
+    {
+        RootNavigationView.Loaded -= OnRootNavigationViewLoaded;
+        try
+        {
+            await SteamPathCoordinator.EnsureResolvedAsync();
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("启动时解析 Steam 安装路径失败。", ex);
+        }
     }
 
     public void ShowStatus(string message, InfoBarSeverity severity)

@@ -175,6 +175,13 @@ public sealed partial class CachedAccountsPage : Page, INotifyPropertyChanged
             return;
         }
 
+        // 首启自动检测并持久化 Steam 路径；失效则重测；都不行才弹框让用户选。用户取消即中止恢复。
+        if (!await SteamPathCoordinator.EnsureResolvedAsync())
+        {
+            AppState.ShowStatus(Loc.T("SteamPath_Status_Required"), InfoBarSeverity.Warning);
+            return;
+        }
+
         AppState.SetBusy(true);
         AppState.ShowStatus(Loc.Tf("Cached_Restore_Progress_Format", account.AccountTitle), InfoBarSeverity.Informational);
 
