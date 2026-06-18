@@ -8,8 +8,7 @@ namespace SteamEyaWinUI.Services;
 internal sealed partial class SteamWorkshopService
 {
     private const uint AppId = 730;
-    private const int ListType = 1;
-    private const int DelayMs = 600;
+    private const int MaxConcurrentUnsubscribes = 5;
 
     private readonly JwtTokenService _jwtTokenService = new();
 
@@ -43,7 +42,7 @@ internal sealed partial class SteamWorkshopService
 
         progress?.Report(Loc.Tf("Workshop_Progress_LoggedIn_Format", token.SteamId));
         progress?.Report(Loc.T("Workshop_Progress_GettingWebSession"));
-        var cookieHeader = await GetWebSessionAsync(cmClient, eyaToken, token.SteamId, cancellationToken);
+        var (cookieHeader, sessionId) = await GetWebSessionAsync(cmClient, eyaToken, token.SteamId, cancellationToken);
 
         progress?.Report(Loc.T("Workshop_Progress_GettingSubscriptions"));
         var (ids, titles) = await EnumerateSubscriptionsAsync(token.SteamId, cookieHeader, cancellationToken);
@@ -57,38 +56,41 @@ internal sealed partial class SteamWorkshopService
         progress?.Report(Loc.Tf("Workshop_Progress_FoundSubscriptions_Format", ids.Count));
 
         var unsubscribed = 0;
-        for (var i = 0; i < ids.Count; i++)
+        var processed = 0;
+        using var throttle = new SemaphoreSlim(MaxConcurrentUnsubscribes);
+
+        var tasks = ids.Select(id =>
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var id = ids[i];
             var title = titles.GetValueOrDefault(id, "");
-            var result = await cmClient.UnsubscribePublishedFileAsync(
-                ulong.Parse(id),
-                AppId,
-                ListType,
-                cancellationToken);
+            return UnsubscribeOneAsync(id, title);
+        }).ToArray();
 
-            var gone = result == SteamEresult.Ok &&
-                !await cmClient.IsPublishedFileSubscribedAsync(
-                    ulong.Parse(id),
-                    AppId,
-                    ListType,
-                    cancellationToken);
+        await Task.WhenAll(tasks);
 
-            if (gone)
+        async Task UnsubscribeOneAsync(string id, string title)
+        {
+            await throttle.WaitAsync(cancellationToken);
+            try
             {
-                unsubscribed++;
-                progress?.Report(Loc.Tf("Workshop_Progress_ItemUnsubscribed_Format", i + 1, ids.Count, id, title));
+                cancellationToken.ThrowIfCancellationRequested();
+                var ok = await UnsubscribeViaWebAsync(id, cookieHeader, sessionId, cancellationToken);
+                var current = Interlocked.Increment(ref processed);
+
+                if (ok)
+                {
+                    Interlocked.Increment(ref unsubscribed);
+                    progress?.Report(Loc.Tf("Workshop_Progress_ItemUnsubscribed_Format",
+                        current, ids.Count, id, title));
+                }
+                else
+                {
+                    progress?.Report(Loc.Tf("Workshop_Progress_ItemFailed_Format",
+                        current, ids.Count, id, title, "HTTP"));
+                }
             }
-            else
+            finally
             {
-                progress?.Report(Loc.Tf("Workshop_Progress_ItemFailed_Format", i + 1, ids.Count, id, title, result));
-            }
-
-            if (i < ids.Count - 1)
-            {
-                await Task.Delay(DelayMs, cancellationToken);
+                throttle.Release();
             }
         }
 
@@ -96,7 +98,7 @@ internal sealed partial class SteamWorkshopService
         return unsubscribed;
     }
 
-    private static async Task<string> GetWebSessionAsync(
+    private static async Task<(string cookieHeader, string sessionId)> GetWebSessionAsync(
         SteamCmClient cmClient,
         string refreshToken,
         string steamId,
@@ -107,7 +109,29 @@ internal sealed partial class SteamWorkshopService
         var sessionId = RandomHex(12);
         var clientSessionId = RandomHex(8);
 
-        return $"steamLoginSecure={steamLoginSecure}; sessionid={sessionId}; clientsessionid={clientSessionId}";
+        var cookieHeader = $"steamLoginSecure={steamLoginSecure}; sessionid={sessionId}; clientsessionid={clientSessionId}";
+        return (cookieHeader, sessionId);
+    }
+
+    private static async Task<bool> UnsubscribeViaWebAsync(
+        string fileId,
+        string cookieHeader,
+        string sessionId,
+        CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post,
+            "https://steamcommunity.com/sharedfiles/unsubscribe");
+        request.Headers.Add("Cookie", cookieHeader);
+        request.Headers.Add("User-Agent", "Mozilla/5.0");
+        request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["appid"] = AppId.ToString(),
+            ["id"] = fileId,
+            ["sessionid"] = sessionId
+        });
+
+        using var response = await HttpClient.SendAsync(request, cancellationToken);
+        return (int)response.StatusCode < 400;
     }
 
     private static async Task<(List<string> ids, Dictionary<string, string> titles)> EnumerateSubscriptionsAsync(
