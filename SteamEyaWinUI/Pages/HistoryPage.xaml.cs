@@ -263,11 +263,18 @@ public sealed partial class HistoryPage : Page, INotifyPropertyChanged
         // 此前该按钮只重读磁盘，资料一旦落盘便再无任何入口更新，账号改名/换头像后界面永远停留旧值。
         AppState.ReloadHistory(GetSelectedSteamId());
 
+        // 同步已在进行时不谎报「已刷新」成功：重新提示进行中状态（顺带恢复被其它消息顶掉的提示）。
+        if (_profileRefreshInFlight)
+        {
+            AppState.ShowStatus(Loc.T("History_Status_ProfileSyncing"), InfoBarSeverity.Informational);
+            return;
+        }
+
         var steamIds = AppState.HistoryAccounts
             .Select(item => item.SteamId)
             .Where(id => !string.IsNullOrWhiteSpace(id))
             .ToList();
-        if (_profileRefreshInFlight || steamIds.Count == 0)
+        if (steamIds.Count == 0)
         {
             AppState.ShowStatus(Loc.T("History_Status_Refreshed"), InfoBarSeverity.Success);
             return;

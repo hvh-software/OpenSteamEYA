@@ -216,13 +216,18 @@ internal sealed class AccountHistoryService
         }
     }
 
+    // personaName/avatarUrl/avatarPath：查询流程已顺带抓到的资料，非空白才覆盖（与 SaveLoginAsync 合并语义一致）。
+    // 不传则保持存量不动——否则只查询过、从未登录的账号会永远缺昵称头像（抓到即丢弃、每次查询重复浪费）。
     public void SaveCsAccountStatus(
         string accountName,
         string steamId,
         string eyaToken,
         DateTimeOffset? tokenExpiresAt,
         CsPremierScoreResult score,
-        SteamTokenOnlineValidationResult jwtValidation)
+        SteamTokenOnlineValidationResult jwtValidation,
+        string? personaName = null,
+        string? avatarUrl = null,
+        string? avatarPath = null)
     {
         accountName = accountName.Trim();
         steamId = steamId.Trim();
@@ -270,6 +275,89 @@ internal sealed class AccountHistoryService
             item.CsPlayerLevel = score.PlayerLevel;
             item.InCsMatch = score.InMatch;
             item.CsStatusUpdatedAt = DateTimeOffset.Now;
+
+            if (!string.IsNullOrWhiteSpace(personaName))
+            {
+                item.PersonaName = personaName;
+            }
+
+            if (!string.IsNullOrWhiteSpace(avatarUrl))
+            {
+                item.AvatarUrl = avatarUrl;
+            }
+
+            if (!string.IsNullOrWhiteSpace(avatarPath))
+            {
+                item.AvatarPath = avatarPath;
+            }
+
+            document.Accounts = NormalizeAccounts(document.Accounts).ToList();
+            WriteDocument(document);
+        }
+        finally
+        {
+            _fileGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// 个性化应用成功后，用已知的新昵称/头像直接写回本地记录——不依赖再抓：
+    /// 社区资料接口有边缘缓存，改名后立刻抓取可能仍返回旧值、把记录「倒退」回去。
+    /// <paramref name="avatarImageSourcePath"/> 非空时把该图片复制进头像库并更新 AvatarPath。
+    /// </summary>
+    public void UpdateProfileLocally(string steamId, string? personaName, string? avatarImageSourcePath)
+    {
+        steamId = steamId.Trim();
+        if (string.IsNullOrWhiteSpace(steamId))
+        {
+            return;
+        }
+
+        string? avatarPath = null;
+        if (!string.IsNullOrWhiteSpace(avatarImageSourcePath) && File.Exists(avatarImageSourcePath))
+        {
+            string? tempPath = null;
+            try
+            {
+                Directory.CreateDirectory(AvatarFolderPath);
+                avatarPath = Path.Combine(AvatarFolderPath, $"{GetSafeAvatarKey(steamId, steamId)}.jpg");
+                tempPath = avatarPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                File.Copy(avatarImageSourcePath, tempPath, overwrite: true);
+                File.Move(tempPath, avatarPath, overwrite: true);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                AppLog.Warn($"复制个性化头像到头像库失败：{ex.Message}");
+                TryDeleteFile(tempPath);
+                avatarPath = null;
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(personaName) && avatarPath is null)
+        {
+            return;
+        }
+
+        _fileGate.Wait();
+        try
+        {
+            var document = ReadDocumentForWrite();
+            var item = document.Accounts.FirstOrDefault(account =>
+                string.Equals(account.SteamId, steamId, StringComparison.OrdinalIgnoreCase));
+            if (item is null)
+            {
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(personaName))
+            {
+                item.PersonaName = personaName.Trim();
+            }
+
+            if (avatarPath is not null)
+            {
+                item.AvatarPath = avatarPath;
+            }
 
             document.Accounts = NormalizeAccounts(document.Accounts).ToList();
             WriteDocument(document);
@@ -454,6 +542,23 @@ internal sealed class AccountHistoryService
             return 0;
         }
 
+        // 抓取前快照各账号当前 (PersonaName, AvatarUrl)：批量抓取可持续数分钟，期间个性化/登录兜底刷新
+        // 可能已写入更新的资料；合并时若发现字段已不等于快照值（有并发新写入），跳过覆盖，
+        // 避免用几分钟前抓到的旧资料把新值「倒退」回去（乐观并发检查）。
+        var baseline = new Dictionary<string, (string? PersonaName, string? AvatarUrl)>(StringComparer.OrdinalIgnoreCase);
+        await _fileGate.WaitAsync();
+        try
+        {
+            foreach (var account in ReadDocument().Accounts)
+            {
+                baseline[account.SteamId] = (account.PersonaName, account.AvatarUrl);
+            }
+        }
+        finally
+        {
+            _fileGate.Release();
+        }
+
         // 限并发到 4：这把锁只管网络抓取节流，与文件互斥锁 _fileGate 是两把不同的锁，别混用。
         using var fetchThrottle = new SemaphoreSlim(MaxProfileFetchConcurrency, MaxProfileFetchConcurrency);
         var results = await Task.WhenAll(distinctIds.Select(async steamId =>
@@ -492,18 +597,39 @@ internal sealed class AccountHistoryService
                     continue;
                 }
 
-                if (!string.IsNullOrWhiteSpace(profile.PersonaName))
+                // 抓取期间该字段已被并发写入更新（与快照不符）时跳过覆盖：并发写入的值必然比本次
+                // 抓取开始前的网络快照新，覆盖只会造成资料「倒退」。
+                var snapshot = baseline.TryGetValue(steamId, out var value) ? value : default;
+                var wrote = false;
+                if (!string.IsNullOrWhiteSpace(profile.PersonaName) && item.PersonaName == snapshot.PersonaName)
                 {
                     item.PersonaName = profile.PersonaName;
+                    wrote = true;
                 }
 
-                if (!string.IsNullOrWhiteSpace(profile.AvatarUrl))
+                if (!string.IsNullOrWhiteSpace(profile.AvatarUrl) && item.AvatarUrl == snapshot.AvatarUrl)
                 {
+                    var urlChanged = !string.Equals(item.AvatarUrl, profile.AvatarUrl, StringComparison.OrdinalIgnoreCase);
                     item.AvatarUrl = profile.AvatarUrl;
-                    item.AvatarPath = avatarPath ?? item.AvatarPath;
+                    if (avatarPath is not null)
+                    {
+                        item.AvatarPath = avatarPath;
+                    }
+                    else if (urlChanged)
+                    {
+                        // 头像已换但本次下载失败：清空本地路径让 UI 走新 URL 远程回退，
+                        // 否则本地旧图优先、新头像永远不显示。
+                        item.AvatarPath = null;
+                    }
+
+                    wrote = true;
                 }
 
-                updatedCount++;
+                // 只计实际写入资料的账号：抓到但字段全空（什么都没写）不算「已同步」，避免提示数虚高。
+                if (wrote)
+                {
+                    updatedCount++;
+                }
             }
 
             if (updatedCount > 0)
@@ -711,7 +837,10 @@ internal sealed class AccountHistoryService
 
         try
         {
-            var url = $"https://steamcommunity.com/profiles/{Uri.EscapeDataString(steamId.Trim())}?xml=1";
+            // nc 一次性参数穿透边缘缓存：?xml=1 被 CDN 缓存最长 1 小时（缓存键含查询串，唯一参数必回源），
+            // 否则改名/换头像后的刷新会抓到旧快照并把记录「倒退」回旧值。
+            var url = $"https://steamcommunity.com/profiles/{Uri.EscapeDataString(steamId.Trim())}" +
+                $"?xml=1&nc={DateTimeOffset.UtcNow.Ticks}";
             var xml = await DefaultHttpClient.GetStringAsync(url);
             var document = XDocument.Parse(xml);
             var root = document.Root;
@@ -724,20 +853,20 @@ internal sealed class AccountHistoryService
                 root.Element("steamID")?.Value,
                 root.Element("avatarFull")?.Value ?? root.Element("avatarMedium")?.Value);
         }
-        catch (HttpRequestException)
+        catch (HttpRequestException ex)
         {
+            AppLog.Warn($"抓取 Steam 资料失败（{steamId}）：{ex.Message}");
             return null;
         }
         catch (TaskCanceledException)
         {
-            return null;
-        }
-        catch (WebException)
-        {
+            AppLog.Warn($"抓取 Steam 资料超时（{steamId}）。");
             return null;
         }
         catch (System.Xml.XmlException)
         {
+            // 不存在/被封禁的账号返回 200 + HTML 错误页，非 XML。
+            AppLog.Warn($"Steam 资料响应非 XML（{steamId}），已跳过。");
             return null;
         }
     }
@@ -752,6 +881,7 @@ internal sealed class AccountHistoryService
             return null;
         }
 
+        string? tempPath = null;
         try
         {
             using var response = await DefaultHttpClient.GetAsync(avatarUri);
@@ -761,16 +891,17 @@ internal sealed class AccountHistoryService
             }
 
             var bytes = await response.Content.ReadAsByteArrayAsync();
-            if (bytes.Length == 0)
+            if (bytes.Length == 0 || !LooksLikeImage(bytes))
             {
+                // 拦下捕获门户/劫持网络返回的 200+HTML「头像」：这类坏文件落盘后 UI 解码必失败。
                 return null;
             }
 
             Directory.CreateDirectory(AvatarFolderPath);
             var avatarPath = Path.Combine(AvatarFolderPath, $"{GetSafeAvatarKey(steamId, accountName)}.jpg");
-            // 原子写：先写临时文件再整体替换，避免 UI 线程在覆盖期间读到半截 JPEG 或撞上写入中的文件，
-            // 那会让已显示的头像瞬时闪失（需重进/重登才回来）。
-            var tempPath = avatarPath + ".tmp";
+            // 原子写：先写临时文件再整体替换，避免 UI 线程在覆盖期间读到半截 JPEG 或撞上写入中的文件。
+            // 临时名带随机后缀：登录兜底刷新与手动刷新可并发下载同一账号，固定名会互撞静默失败。
+            tempPath = avatarPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
             await File.WriteAllBytesAsync(tempPath, bytes);
             File.Move(tempPath, avatarPath, overwrite: true);
             return avatarPath;
@@ -785,13 +916,22 @@ internal sealed class AccountHistoryService
         }
         catch (IOException)
         {
+            TryDeleteFile(tempPath);
             return null;
         }
         catch (UnauthorizedAccessException)
         {
+            TryDeleteFile(tempPath);
             return null;
         }
     }
+
+    // JPEG(FF D8 FF) / PNG(89 50 4E 47) / GIF(47 49 46)——头像 CDN 只会返回这三类图片。
+    private static bool LooksLikeImage(byte[] bytes) =>
+        bytes.Length >= 4 &&
+        ((bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF) ||
+            (bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47) ||
+            (bytes[0] == 0x47 && bytes[1] == 0x49 && bytes[2] == 0x46));
 
     private static string GetSafeAvatarKey(string steamId, string accountName)
     {

@@ -209,14 +209,22 @@ public sealed partial class LoginPage : Page, INotifyPropertyChanged
                 ShowStatus(Loc.T("Login_Status_Personalized"), InfoBarSeverity.Success);
             }
 
-            // 只要有任一项应用成功就后台重抓资料，让历史页/信息面板跟上新昵称头像
-            //（steamcommunity 边缘缓存可能短暂返回旧值，后续登录/手动刷新会再兜底）。
+            // 应用成功的项用「已知的新值」直接写回本地记录并刷新界面——不走再抓：
+            // 社区资料接口有边缘缓存，改名后立刻抓取可能仍返回旧值，反而把记录「倒退」回去。
             if (result.NameApplied || result.AvatarApplied)
             {
                 var steamId = AppState.JwtTokenService.Inspect(eyaToken).SteamId;
                 if (!string.IsNullOrWhiteSpace(steamId))
                 {
-                    StartBackgroundProfileRefresh(steamId);
+                    await Task.Run(() => AppState.AccountHistoryService.UpdateProfileLocally(
+                        steamId,
+                        result.NameApplied ? personaName : null,
+                        result.AvatarApplied ? avatarPath : null));
+                    AppState.ReloadHistory();
+                    if (string.Equals(_accountInfoPanelSteamId, steamId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        ApplyStoredAccountInfoProfile(steamId);
+                    }
                 }
             }
 
@@ -424,7 +432,9 @@ public sealed partial class LoginPage : Page, INotifyPropertyChanged
             EnsureTokenValidForAction(eyaToken, "Login_Action_Login");
             UpdateAccountInfo(accountName, eyaToken);
             // 这一次抓取的 persona/头像直接传给 SaveLoginAsync，避免历史保存时重复抓取一遍。
-            var profile = await UpdateAccountProfileAsync(accountName, eyaToken);
+            // triggerBackgroundRefresh:false——登录耗时数十秒，此刻兜底刷新写入的新值会被登录结束时
+            // SaveLoginAsync 回写的本快照（旧值）覆盖，兜底刷新改在 SaveLoginHistoryAsync 保存之后做。
+            var profile = await UpdateAccountProfileAsync(accountName, eyaToken, triggerBackgroundRefresh: false);
             await EnsureTokenAcceptedBySteamAsync(eyaToken, "Login_Action_Login", cancellationToken);
             var result = await Task.Run(
                 () => AppState.LoginService.Login(accountName, eyaToken, progress),
@@ -473,7 +483,8 @@ public sealed partial class LoginPage : Page, INotifyPropertyChanged
         EnsureTokenValidForAction(eyaToken, "Login_Action_Login");
         UpdateAccountInfo(accountName, eyaToken);
         // 本次抓取的 persona/头像直接传给 SaveLoginAsync，避免历史保存时重复抓取。
-        var profile = await UpdateAccountProfileAsync(accountName, eyaToken);
+        // triggerBackgroundRefresh:false 的理由同「登录到 Steam」：兜底刷新移到保存之后，防旧快照覆盖新值。
+        var profile = await UpdateAccountProfileAsync(accountName, eyaToken, triggerBackgroundRefresh: false);
         await EnsureTokenAcceptedBySteamAsync(eyaToken, "Login_Action_Login", cancellationToken);
         var result = await Task.Run(
             () => AppState.LoginService.Login(accountName, eyaToken, progress),
@@ -716,7 +727,9 @@ public sealed partial class LoginPage : Page, INotifyPropertyChanged
             ?? throw new InvalidOperationException(Loc.T("Login_Error_TokenMissingSteamIdQuery"));
 
         UpdateAccountInfo(accountName, eyaToken);
-        await UpdateAccountProfileAsync(accountName, eyaToken);
+        // 接住抓到的资料：随 CS 状态一并落盘。丢弃的话，只查询过的账号昵称/头像永远「未同步」，
+        // 且下方 ApplyStoredAccountInfoProfile 会用无资料记录把面板上闪现的正确昵称头像抹回去。
+        var prefetchedProfile = await UpdateAccountProfileAsync(accountName, eyaToken);
         AccountInfoAvailabilityText.Text = Loc.T("Login_Availability_VerifyingAndQuerying");
         AccountInfoAvailabilityText.Foreground = FormatHelper.GetStatusBrush(InfoBarSeverity.Informational);
         AccountInfoPremierScoreText.Text = Loc.T("Login_Value_Querying");
@@ -751,7 +764,10 @@ public sealed partial class LoginPage : Page, INotifyPropertyChanged
             eyaToken,
             tokenInfo.ExpiresAt,
             score,
-            online);
+            online,
+            NullIfBlank(prefetchedProfile?.PersonaName),
+            NullIfBlank(prefetchedProfile?.AvatarUrl),
+            NullIfBlank(prefetchedProfile?.AvatarPath));
 
         AppState.ReloadHistory(steamId);
         AccountInfoPremierScoreText.Text = score.DisplayText;
@@ -780,6 +796,9 @@ public sealed partial class LoginPage : Page, INotifyPropertyChanged
                 NullIfBlank(prefetchedProfile?.AvatarPath));
             AppState.ReloadHistory(result.SteamId);
             ApplyStoredAccountInfoProfile(result.SteamId);
+            // 兜底刷新放在保存之后：登录期间抓的预取快照已经旧了几十秒，若在登录前就刷新，
+            // 新值会被上面 SaveLoginAsync 回写的旧快照覆盖（登录路径永不收敛）。
+            StartBackgroundProfileRefresh(result.SteamId);
             _lastLoginHistorySaveFailed = false;
             return Loc.T("Login_Status_HistorySaved_Suffix");
         }
@@ -793,8 +812,13 @@ public sealed partial class LoginPage : Page, INotifyPropertyChanged
     private static string? NullIfBlank(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value;
 
+    /// <summary>右侧账号信息面板当前展示的 SteamID（由 UpdateAccountInfo 解析令牌时维护，仅 UI 线程访问）。</summary>
+    private string? _accountInfoPanelSteamId;
+
     /// <summary>
-    /// 后台重新抓取单个账号的昵称/头像并落盘，有更新时回 UI 线程重载历史列表与右侧信息面板。
+    /// 后台重新抓取单个账号的昵称/头像并落盘，有更新时回 UI 线程重载历史列表；
+    /// 仅当面板仍展示该账号时才更新面板，且只更新昵称/头像——不碰分数/等级/冷却，
+    /// 避免迟到的回调覆盖「查询中…」占位或把上一个账号的资料刷进当前面板。
     /// 失败只记日志（best-effort，绝不打扰主流程）。
     /// </summary>
     private void StartBackgroundProfileRefresh(string steamId)
@@ -809,7 +833,20 @@ public sealed partial class LoginPage : Page, INotifyPropertyChanged
                     DispatcherQueue.TryEnqueue(() =>
                     {
                         AppState.ReloadHistory();
-                        ApplyStoredAccountInfoProfile(steamId);
+                        if (!string.Equals(_accountInfoPanelSteamId, steamId, StringComparison.OrdinalIgnoreCase))
+                        {
+                            return;
+                        }
+
+                        var account = AppState.FindHistoryAccount(steamId);
+                        if (account is null)
+                        {
+                            return;
+                        }
+
+                        AccountInfoAvatar.DisplayName = account.AccountTitle;
+                        AccountInfoAvatar.ProfilePicture = account.AvatarImage;
+                        AccountInfoPersonaText.Text = account.PersonaDisplayName;
                     });
                 }
             }
@@ -823,8 +860,11 @@ public sealed partial class LoginPage : Page, INotifyPropertyChanged
     /// <summary>
     /// 同步右侧账号信息面板的头像/昵称，并返回本次已知的资料供调用方预取（避免后续 SaveLoginAsync 再抓一遍）。
     /// 命中已完整的历史记录时返回该记录；否则返回网络抓取到的预览；都拿不到返回 null。
+    /// <paramref name="triggerBackgroundRefresh"/>=false 供登录路径使用：登录流程在保存历史后自行兜底刷新，
+    /// 此处再触发只会让新值被登录结束时回写的旧快照覆盖。
     /// </summary>
-    private async Task<SteamAccountHistoryItem?> UpdateAccountProfileAsync(string accountName, string eyaToken)
+    private async Task<SteamAccountHistoryItem?> UpdateAccountProfileAsync(
+        string accountName, string eyaToken, bool triggerBackgroundRefresh = true)
     {
         var tokenInfo = AppState.JwtTokenService.Inspect(eyaToken);
         if (string.IsNullOrWhiteSpace(tokenInfo.SteamId))
@@ -842,7 +882,11 @@ public sealed partial class LoginPage : Page, INotifyPropertyChanged
             {
                 // 命中完整记录立即返回供显示，但后台仍兜底重新抓取一次：
                 // 否则资料一旦落盘便永久冻结，账号在 Steam 侧改名/换头像后这里永远显示旧值。
-                StartBackgroundProfileRefresh(tokenInfo.SteamId);
+                if (triggerBackgroundRefresh)
+                {
+                    StartBackgroundProfileRefresh(tokenInfo.SteamId);
+                }
+
                 return storedAccount;
             }
         }
@@ -965,6 +1009,7 @@ public sealed partial class LoginPage : Page, INotifyPropertyChanged
 
         if (string.IsNullOrWhiteSpace(token))
         {
+            _accountInfoPanelSteamId = null;
             AccountInfoSteamIdText.Text = Loc.T("Login_Value_NotResolved");
             AccountInfoExpiresText.Text = Loc.T("Login_Value_NotResolved");
             AccountInfoAvailabilityText.Text = Loc.T("Login_Availability_NotVerified");
@@ -973,6 +1018,7 @@ public sealed partial class LoginPage : Page, INotifyPropertyChanged
         }
 
         var info = AppState.JwtTokenService.Inspect(token);
+        _accountInfoPanelSteamId = string.IsNullOrWhiteSpace(info.SteamId) ? null : info.SteamId;
         AccountInfoSteamIdText.Text = string.IsNullOrWhiteSpace(info.SteamId) ? Loc.T("Login_Value_NotResolved") : info.SteamId;
         AccountInfoExpiresText.Text = info.ExpiresAt.HasValue
             ? info.ExpiresAt.Value.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss")

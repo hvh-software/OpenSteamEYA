@@ -44,6 +44,11 @@ internal sealed class Cs2CloudService
     // 避免两个 730 身份的 Steamworks 会话同时写同名云文件、结果无法归因。
     private static readonly object PushGate = new();
 
+    // 登录路径推送的代际号（last-writer-wins）：每次新登录推送自增；持锁中的旧推送轮询发现代际已更新
+    // 就立即杀掉辅助进程让位。否则连续切号时，旧账号的推送（其目标账号已被登出、注定失败）会白占锁
+    // 几十秒，把唯一能成功的最新账号推送饿到超时放弃。「立即推送」不参与代际抢占。
+    private static long _loginPushGeneration;
+
     /// <summary>枚举「已上云过 CS2 设置」的候选来源账号（remote 下有 cs2_user_*.vcfg），供设置页来源下拉。</summary>
     public IReadOnlyList<Cs2SettingsSource> EnumerateSources(string? userdataPath)
     {
@@ -207,6 +212,14 @@ internal sealed class Cs2CloudService
             return new Cs2CloudPushResult(false, 0, Loc.T("Cs2Cloud_Error_NoSource"));
         }
 
+        // 登录路径（带目标账号）先领代际号：持锁中的旧登录推送会在 ~1s 内察觉并让位，
+        // 因此下面的 TryEnter 对最新登录推送几乎必然成功。
+        long? generation = null;
+        if (!string.IsNullOrWhiteSpace(expectedSteamId64))
+        {
+            generation = Interlocked.Increment(ref _loginPushGeneration);
+        }
+
         // 限时抢锁而非无限期排队：登录后台推送可能持锁几十秒（辅助进程要等 Steam 登录就绪），
         // 「立即推送」若在此期间无限期阻塞会表现为分钟级无反馈假死。抢不到就明确告知用户稍后再试。
         if (!Monitor.TryEnter(PushGate, TimeSpan.FromSeconds(maxWaitSeconds)))
@@ -217,7 +230,7 @@ internal sealed class Cs2CloudService
 
         try
         {
-            return RunPushHelper(files, maxWaitSeconds, expectedSteamId64);
+            return RunPushHelper(files, maxWaitSeconds, expectedSteamId64, generation);
         }
         finally
         {
@@ -225,10 +238,21 @@ internal sealed class Cs2CloudService
         }
     }
 
+    // 本推送是否已被更新的登录推送取代（generation=null 表示不参与抢占）。
+    private static bool IsSuperseded(long? generation) =>
+        generation is { } gen && Interlocked.Read(ref _loginPushGeneration) != gen;
+
     // 写 payload → 拉起自身 exe 的辅助进程 → 等其退出 → 解析 result.txt。临时目录 finally 里清理。
     private static Cs2CloudPushResult RunPushHelper(
-        IReadOnlyList<Cs2CfgFile> files, int maxWaitSeconds, string? expectedSteamId64)
+        IReadOnlyList<Cs2CfgFile> files, int maxWaitSeconds, string? expectedSteamId64, long? generation)
     {
+        // 排队等锁期间已有更新的登录到来：本推送的目标账号注定登不上，直接让位不再拉进程。
+        if (IsSuperseded(generation))
+        {
+            AppLog.Info("CS2 云推送已被更新的登录取代（未启动辅助进程）。");
+            return new Cs2CloudPushResult(false, 0, Loc.T("Cs2Cloud_Error_Superseded"));
+        }
+
         var exePath = Environment.ProcessPath;
         if (string.IsNullOrEmpty(exePath) || !File.Exists(exePath))
         {
@@ -272,12 +296,25 @@ internal sealed class Cs2CloudService
                 return new Cs2CloudPushResult(false, 0, Loc.T("Cs2Cloud_Error_HelperLaunchFailed"));
             }
 
-            // 辅助进程自带 maxWaitSeconds 的重试等待，这里再给退出与写结果留余量。
-            if (!helper.WaitForExit((maxWaitSeconds + 30) * 1000))
+            // 1s 步长轮询等待：辅助进程自带 maxWaitSeconds 的重试等待，这里再给退出与写结果留余量；
+            // 期间发现已有更新的登录推送（代际号变化）就立即杀掉本辅助进程让位——它的目标账号已被登出，
+            // 继续等只会白占锁把最新推送饿死。
+            var deadline = Environment.TickCount64 + (maxWaitSeconds + 30) * 1000L;
+            while (!helper.WaitForExit(1000))
             {
-                AppLog.Warn("CS2 云推送辅助进程超时未退出，强制结束。");
-                TryKillHelper(helper);
-                return new Cs2CloudPushResult(false, 0, Loc.T("Cs2Cloud_Error_HelperTimeout"));
+                if (IsSuperseded(generation))
+                {
+                    AppLog.Info("已有更新的登录推送到来，终止本次 CS2 云推送辅助进程让位。");
+                    TryKillHelper(helper);
+                    return new Cs2CloudPushResult(false, 0, Loc.T("Cs2Cloud_Error_Superseded"));
+                }
+
+                if (Environment.TickCount64 >= deadline)
+                {
+                    AppLog.Warn("CS2 云推送辅助进程超时未退出，强制结束。");
+                    TryKillHelper(helper);
+                    return new Cs2CloudPushResult(false, 0, Loc.T("Cs2Cloud_Error_HelperTimeout"));
+                }
             }
 
             return ReadHelperResult(Path.Combine(payloadDir, Cs2CloudPushWorker.ResultFileName));

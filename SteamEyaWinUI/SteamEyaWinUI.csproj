@@ -1,7 +1,4 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup Label="Globals">
-    <WV2WinRTIgnoreWebHostHiddenAttribute>True</WV2WinRTIgnoreWebHostHiddenAttribute>
-  </PropertyGroup>
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <!-- net10.0：net8.0 的 Native AOT 有 WinUI GC 挂死缺陷（dotnet/runtime#104582，.NET 9+ 才修复）。 -->

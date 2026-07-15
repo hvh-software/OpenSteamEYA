@@ -189,18 +189,36 @@ internal sealed class SteamLoginCacheService
                     continue;
                 }
 
+                var wrote = false;
                 if (!string.IsNullOrWhiteSpace(profile.PersonaName))
                 {
                     item.PersonaName = profile.PersonaName;
+                    wrote = true;
                 }
 
                 if (!string.IsNullOrWhiteSpace(profile.AvatarUrl))
                 {
+                    var urlChanged = !string.Equals(item.AvatarUrl, profile.AvatarUrl, StringComparison.OrdinalIgnoreCase);
                     item.AvatarUrl = profile.AvatarUrl;
-                    item.AvatarPath = avatarPath ?? item.AvatarPath;
+                    if (avatarPath is not null)
+                    {
+                        item.AvatarPath = avatarPath;
+                    }
+                    else if (urlChanged)
+                    {
+                        // 头像已换但本次下载失败：清空本地路径让 UI 走新 URL 远程回退，
+                        // 否则本地旧图优先、新头像永远不显示。
+                        item.AvatarPath = null;
+                    }
+
+                    wrote = true;
                 }
 
-                updatedCount++;
+                // 只计实际写入资料的账号：抓到但字段全空（什么都没写）不算「已同步」，避免提示数虚高。
+                if (wrote)
+                {
+                    updatedCount++;
+                }
             }
 
             if (updatedCount > 0)
@@ -359,7 +377,10 @@ internal sealed class SteamLoginCacheService
 
         try
         {
-            var url = $"https://steamcommunity.com/profiles/{Uri.EscapeDataString(steamId.Trim())}?xml=1";
+            // nc 一次性参数穿透边缘缓存：?xml=1 被 CDN 缓存最长 1 小时（缓存键含查询串，唯一参数必回源），
+            // 否则改名/换头像后的刷新会抓到旧快照并把记录「倒退」回旧值。
+            var url = $"https://steamcommunity.com/profiles/{Uri.EscapeDataString(steamId.Trim())}" +
+                $"?xml=1&nc={DateTimeOffset.UtcNow.Ticks}";
             var xml = await DefaultHttpClient.GetStringAsync(url);
             var document = XDocument.Parse(xml);
             var root = document.Root;
@@ -372,16 +393,20 @@ internal sealed class SteamLoginCacheService
                 root.Element("steamID")?.Value,
                 root.Element("avatarFull")?.Value ?? root.Element("avatarMedium")?.Value);
         }
-        catch (HttpRequestException)
+        catch (HttpRequestException ex)
         {
+            AppLog.Warn($"抓取 Steam 资料失败（{steamId}）：{ex.Message}");
             return null;
         }
         catch (TaskCanceledException)
         {
+            AppLog.Warn($"抓取 Steam 资料超时（{steamId}）。");
             return null;
         }
         catch (System.Xml.XmlException)
         {
+            // 不存在/被封禁的账号返回 200 + HTML 错误页，非 XML。
+            AppLog.Warn($"Steam 资料响应非 XML（{steamId}），已跳过。");
             return null;
         }
     }
@@ -396,6 +421,7 @@ internal sealed class SteamLoginCacheService
             return null;
         }
 
+        string? tempPath = null;
         try
         {
             using var response = await DefaultHttpClient.GetAsync(avatarUri);
@@ -405,16 +431,17 @@ internal sealed class SteamLoginCacheService
             }
 
             var bytes = await response.Content.ReadAsByteArrayAsync();
-            if (bytes.Length == 0)
+            if (bytes.Length == 0 || !LooksLikeImage(bytes))
             {
+                // 拦下捕获门户/劫持网络返回的 200+HTML「头像」：这类坏文件落盘后 UI 解码必失败。
                 return null;
             }
 
             Directory.CreateDirectory(AvatarFolderPath);
             var avatarPath = Path.Combine(AvatarFolderPath, $"{GetSafeAvatarKey(steamId, accountName)}.jpg");
-            // 原子写：先写临时文件再整体替换，避免 UI 线程在覆盖期间读到半截 JPEG 或撞上写入中的文件，
-            // 那会让已显示的头像瞬时闪失（需重进/重登才回来）。
-            var tempPath = avatarPath + ".tmp";
+            // 原子写：先写临时文件再整体替换，避免 UI 线程在覆盖期间读到半截 JPEG 或撞上写入中的文件。
+            // 临时名带随机后缀：登录后台刷新与手动刷新可并发下载同一账号，固定名会互撞静默失败。
+            tempPath = avatarPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
             await File.WriteAllBytesAsync(tempPath, bytes);
             File.Move(tempPath, avatarPath, overwrite: true);
             return avatarPath;
@@ -429,13 +456,22 @@ internal sealed class SteamLoginCacheService
         }
         catch (IOException)
         {
+            TryDeleteFile(tempPath);
             return null;
         }
         catch (UnauthorizedAccessException)
         {
+            TryDeleteFile(tempPath);
             return null;
         }
     }
+
+    // JPEG(FF D8 FF) / PNG(89 50 4E 47) / GIF(47 49 46)——头像 CDN 只会返回这三类图片。
+    private static bool LooksLikeImage(byte[] bytes) =>
+        bytes.Length >= 4 &&
+        ((bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF) ||
+            (bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47) ||
+            (bytes[0] == 0x47 && bytes[1] == 0x49 && bytes[2] == 0x46));
 
     private static string GetSafeAvatarKey(string steamId, string accountName)
     {

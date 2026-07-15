@@ -170,6 +170,11 @@ internal sealed class SteamLoginService
             {
                 var updated = await _loginCacheService.RefreshProfilesAsync(accounts);
                 AppLog.Info($"Updated cached Steam profile data for {updated} account(s).");
+                if (updated > 0)
+                {
+                    // 通知已缓存账号页重载：否则刷新虽已落盘，打开着的页面仍停留在「未同步」旧快照。
+                    AppState.NotifyCachedLoginAccountsRefreshed();
+                }
             }
             catch (Exception ex)
             {

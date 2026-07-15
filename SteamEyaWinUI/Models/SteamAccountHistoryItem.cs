@@ -262,9 +262,11 @@ public sealed partial class SteamAccountHistoryItem : INotifyPropertyChanged
     }
 
     // 进程级头像缓存：列表重建会换新实例，仅靠实例字段无法跨重建复用，必须用静态字典才真正止血。
-    // 键 = 完整路径 + 最后写入时间，头像更新（重新下载覆盖同名文件）后键变化自动失效。
+    // 键 = 完整路径，值带最后写入时间：mtime 不符就重新解码并「替换」同键条目——每次刷新都会重写头像文件
+    //（mtime 必变），若把 mtime 编进键，旧解码位图会永久滞留字典（每轮刷新 × 每账号泄漏一份）。
     // 仅 UI 线程访问（BitmapImage 也只能在 UI 线程使用），普通 Dictionary 即可。
-    private static readonly Dictionary<string, BitmapImage> AvatarCache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, (DateTime Mtime, BitmapImage Image)> AvatarCache =
+        new(StringComparer.OrdinalIgnoreCase);
 
     // PersonPicture 最大显示 92px（历史详情），按 2 倍留 DPI 余量解码。
     private const int AvatarDecodePixelWidth = 184;
@@ -300,10 +302,10 @@ public sealed partial class SteamAccountHistoryItem : INotifyPropertyChanged
         {
             try
             {
-                var cacheKey = $"{localPath}|{File.GetLastWriteTimeUtc(localPath):O}";
-                if (AvatarCache.TryGetValue(cacheKey, out var cached))
+                var mtime = File.GetLastWriteTimeUtc(localPath);
+                if (AvatarCache.TryGetValue(localPath, out var cached) && cached.Mtime == mtime)
                 {
-                    return cached;
+                    return cached.Image;
                 }
 
                 // 从字节解码而非 new BitmapImage(Uri)：后者会长期持有文件句柄，导致删除账号时头像删不掉。
@@ -322,13 +324,14 @@ public sealed partial class SteamAccountHistoryItem : INotifyPropertyChanged
                     bitmap.SetSource(stream.AsRandomAccessStream());
                 }
 
-                AvatarCache[cacheKey] = bitmap;
+                AvatarCache[localPath] = (mtime, bitmap);
                 return bitmap;
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            catch (Exception ex)
             {
+                // 兜底 catch：损坏/非图片文件让 SetSource 抛 COMException，而本 getter 由 x:Bind 在
+                // UI 线程直接调用，异常逃逸会崩掉整个应用；记日志后落到 URL 回退/默认头像。
                 AppLog.Warn($"加载头像失败：{localPath}，{ex.Message}");
-                // 落到下面的 URL 回退或返回 null（默认头像），与原行为一致。
             }
         }
 

@@ -29,6 +29,10 @@ public sealed partial class CachedAccountsPage : Page, INotifyPropertyChanged
         InitializeComponent();
         CachedAccountList.ItemsSource = _viewItems;
         AppState.BusyChanged += _ => UpdateControlsEnabled();
+        // 登录触发的后台资料刷新落盘后自动重载（事件来自后台线程，回 UI 线程执行）；
+        // Reload(GetSelectedKey()) 按键恢复选中，批量勾选按 _checkedKeys 跨重建保留。
+        AppState.CachedLoginAccountsRefreshed += () =>
+            _dispatcherQueue.TryEnqueue(() => Reload(GetSelectedKey()));
         Loc.LanguageChanged += OnLanguageChanged;
         Reload();
     }
@@ -148,7 +152,15 @@ public sealed partial class CachedAccountsPage : Page, INotifyPropertyChanged
         {
             var refreshed = await AppState.LoginService.RefreshCachedLoginProfilesAsync(_sourceItems);
             Reload(GetSelectedKey());
-            AppState.ShowStatus(Loc.Tf("Cached_Refresh_Success_Format", refreshed), InfoBarSeverity.Success);
+            if (refreshed > 0)
+            {
+                AppState.ShowStatus(Loc.Tf("Cached_Refresh_Success_Format", refreshed), InfoBarSeverity.Success);
+            }
+            else
+            {
+                // 一个都没同步成（断网/被限流/无账号）不能弹绿色成功条装作没事。
+                AppState.ShowStatus(Loc.T("Cached_Refresh_None"), InfoBarSeverity.Warning);
+            }
         }
         catch (Exception ex)
         {

@@ -27,6 +27,18 @@ internal static class AppState
     /// <summary>由 MainWindow 注入，向全局状态栏输出消息。</summary>
     public static Action<string, InfoBarSeverity>? StatusReporter { get; set; }
 
+    /// <summary>
+    /// 登录触发的缓存账号后台资料刷新已落盘（SteamLoginService.StartCachedProfileRefresh 完成且有更新）。
+    /// 可能在后台线程触发，订阅方自行回 UI 线程。已缓存账号页订阅以自动重载，否则登录后立即打开该页
+    /// 会一直停留在「未同步」的旧快照上。
+    /// </summary>
+    public static event Action? CachedLoginAccountsRefreshed;
+
+    public static void NotifyCachedLoginAccountsRefreshed()
+    {
+        CachedLoginAccountsRefreshed?.Invoke();
+    }
+
     /// <summary>登录页常驻实例，供历史页复用一键查询流程（保持与旧版一致的联动行为）。</summary>
     public static Pages.LoginPage? LoginPage { get; set; }
 
