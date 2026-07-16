@@ -73,6 +73,45 @@
                 </Grid>
             </Border>
 
+            <!-- 更新站点：可选直连或代理站，手动检测当前选择站点延迟 -->
+            <Border Style="{StaticResource CardBorderStyle}">
+                <StackPanel Spacing="10">
+                    <TextBlock
+                        Text="{x:Bind Strings.Get('Settings_UpdateProxy_Section'), Mode=OneWay}"
+                        Style="{StaticResource SectionTitleTextStyle}" />
+                    <TextBlock
+                        Text="{x:Bind Strings.Get('Settings_UpdateProxy_Desc'), Mode=OneWay}"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextWrapping="Wrap" />
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <ComboBox
+                            x:Name="UpdateProxyComboBox"
+                            Grid.Column="0"
+                            SelectionChanged="UpdateProxyComboBox_SelectionChanged">
+                            <ComboBoxItem Tag="direct" Content="{x:Bind Strings.Get('Settings_UpdateProxy_Direct'), Mode=OneWay}" />
+                            <ComboBoxItem Tag="gh-proxy.org" Content="{x:Bind Strings.Get('Settings_UpdateProxy_GhProxyOrg'), Mode=OneWay}" />
+                            <ComboBoxItem Tag="v4.gh-proxy.org" Content="{x:Bind Strings.Get('Settings_UpdateProxy_GhProxyOrgV4'), Mode=OneWay}" />
+                            <ComboBoxItem Tag="v6.gh-proxy.org" Content="{x:Bind Strings.Get('Settings_UpdateProxy_GhProxyOrgV6'), Mode=OneWay}" />
+                            <ComboBoxItem Tag="cdn.gh-proxy.org" Content="{x:Bind Strings.Get('Settings_UpdateProxy_GhProxyOrgCdn'), Mode=OneWay}" />
+                        </ComboBox>
+                        <Button
+                            x:Name="UpdateProxyLatencyButton"
+                            Grid.Column="1"
+                            Click="UpdateProxyLatencyButton_Click"
+                            ToolTipService.ToolTip="{x:Bind Strings.Get('Settings_UpdateProxy_LatencyButton'), Mode=OneWay}">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xE895;" FontSize="14" />
+                                <TextBlock Text="{x:Bind Strings.Get('Settings_UpdateProxy_LatencyButton'), Mode=OneWay}" />
+                            </StackPanel>
+                        </Button>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
             <!-- Steam 安装路径：上号用的 Steam；装有多个 Steam 时可手动指定要用哪一个 -->
             <Border Style="{StaticResource CardBorderStyle}">
                 <StackPanel Spacing="10">

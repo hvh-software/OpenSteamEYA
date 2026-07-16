@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using SteamEyaWinUI.Localization;
@@ -10,61 +11,83 @@ internal sealed class GitHubUpdateService
 {
     public const string RepositoryUrl = "https://github.com/hvh-software/OpenSteamEYA/";
     public const string ReleasesUrl = $"{RepositoryUrl}/releases";
-
-    private const string LatestReleaseApiUrl = "https://api.github.com/repos/hvh-software/OpenSteamEYA/releases/latest";
+    private const string LatestMetadataUrl = "https://github.com/hvh-software/OpenSteamEYA/releases/latest/download/latest.json";
 
     private static readonly HttpClient HttpClient = CreateHttpClient();
 
+    private static readonly IReadOnlyList<GitHubProxySite> ProxySites =
+    [
+        new("direct", "Direct", null),
+        new("gh-proxy.org", "gh-proxy.org", "https://gh-proxy.org/"),
+        new("v4.gh-proxy.org", "v4.gh-proxy.org", "https://v4.gh-proxy.org/"),
+        new("v6.gh-proxy.org", "v6.gh-proxy.org", "https://v6.gh-proxy.org/"),
+        new("cdn.gh-proxy.org", "cdn.gh-proxy.org", "https://cdn.gh-proxy.org/")
+    ];
+
+    private string _selectedProxyCode = "direct";
+
     public static string CurrentVersion { get; } = GetCurrentVersion();
+
+    public string SelectedProxyCode => _selectedProxyCode;
+
+    public IReadOnlyList<GitHubProxySite> GetProxySites() => ProxySites;
+
+    public void SetProxySite(string? proxyCode)
+    {
+        _selectedProxyCode = ResolveSite(proxyCode).Code;
+    }
 
     public async Task<GitHubUpdateInfo> CheckLatestAsync(CancellationToken cancellationToken = default)
     {
-        using var releaseResponse = await HttpClient.GetAsync(LatestReleaseApiUrl, cancellationToken);
-        releaseResponse.EnsureSuccessStatusCode();
+        var site = ResolveSite(_selectedProxyCode);
 
-        await using var releaseStream = await releaseResponse.Content.ReadAsStreamAsync(cancellationToken);
-        var release = await JsonSerializer.DeserializeAsync(
-            releaseStream,
-            GitHubUpdateJsonContext.Default.GitHubReleaseDto,
+        using var metadataResponse = await HttpClient.GetAsync(BuildUrl(site, LatestMetadataUrl), cancellationToken);
+        metadataResponse.EnsureSuccessStatusCode();
+
+        await using var metadataStream = await metadataResponse.Content.ReadAsStreamAsync(cancellationToken);
+        GitHubReleaseMetadataDto metadata = await JsonSerializer.DeserializeAsync(
+            metadataStream,
+            GitHubUpdateJsonContext.Default.GitHubReleaseMetadataDto,
             cancellationToken)
             ?? throw new InvalidOperationException(Loc.T("Update_EmptyResponse"));
 
-        var metadataAsset = release.Assets.FirstOrDefault(asset =>
-            string.Equals(asset.Name, "latest.json", StringComparison.OrdinalIgnoreCase));
-
-        GitHubReleaseMetadataDto? metadata = null;
-        if (!string.IsNullOrWhiteSpace(metadataAsset?.BrowserDownloadUrl))
-        {
-            using var metadataResponse = await HttpClient.GetAsync(metadataAsset.BrowserDownloadUrl, cancellationToken);
-            metadataResponse.EnsureSuccessStatusCode();
-
-            await using var metadataStream = await metadataResponse.Content.ReadAsStreamAsync(cancellationToken);
-            metadata = await JsonSerializer.DeserializeAsync(
-                metadataStream,
-                GitHubUpdateJsonContext.Default.GitHubReleaseMetadataDto,
-                cancellationToken);
-        }
-
-        var artifact = FindArtifact(release.Assets, metadata?.ArtifactName);
-        var latestVersion = NormalizeVersion(metadata?.Version ?? release.TagName);
-        var latestTag = string.IsNullOrWhiteSpace(metadata?.Tag) ? release.TagName : metadata.Tag;
+        var latestTag = string.IsNullOrWhiteSpace(metadata.Tag)
+            ? "latest"
+            : metadata.Tag!;
+        var latestVersion = NormalizeVersion(metadata.Version ?? metadata.Tag);
         var currentVersion = CurrentVersion;
-        var changelog = metadata?.Changelog?.Where(line => !string.IsNullOrWhiteSpace(line)).ToArray()
+        var changelog = metadata.Changelog?.Where(line => !string.IsNullOrWhiteSpace(line)).ToArray()
             ?? [];
+        var artifactName = metadata.ArtifactName;
+        var artifactUrl = BuildArtifactUrl(site, latestTag, artifactName);
+        var releaseUrl = string.Equals(latestTag, "latest", StringComparison.OrdinalIgnoreCase)
+            ? ReleasesUrl
+            : $"{ReleasesUrl}/tag/{latestTag}";
 
         return new GitHubUpdateInfo(
             currentVersion,
             latestVersion,
             latestTag,
             IsNewerVersion(latestVersion, currentVersion),
-            release.HtmlUrl,
-            artifact?.Name ?? metadata?.ArtifactName,
-            artifact?.BrowserDownloadUrl,
-            artifact?.Size ?? metadata?.ArtifactSize,
-            metadata?.ArtifactType,
-            metadata?.ArtifactSha256,
+            BuildUrl(site, releaseUrl),
+            artifactName,
+            artifactUrl,
+            metadata.ArtifactSize,
+            metadata.ArtifactType,
+            metadata.ArtifactSha256,
             changelog,
             DateTimeOffset.Now);
+    }
+
+    public async Task<TimeSpan> ProbeLatencyAsync(string? proxyCode = null, CancellationToken cancellationToken = default)
+    {
+        var site = ResolveSite(proxyCode ?? _selectedProxyCode);
+        var probeUrl = BuildUrl(site, LatestMetadataUrl);
+        var stopwatch = Stopwatch.StartNew();
+        using var response = await HttpClient.GetAsync(probeUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        stopwatch.Stop();
+        return stopwatch.Elapsed;
     }
 
     private static HttpClient CreateHttpClient()
@@ -79,30 +102,40 @@ internal sealed class GitHubUpdateService
         return client;
     }
 
-    private static GitHubReleaseAssetDto? FindArtifact(
-        IReadOnlyList<GitHubReleaseAssetDto> assets,
-        string? artifactName)
+    private static GitHubProxySite ResolveSite(string? code)
     {
-        // 只要 release 里有安装器，始终优先它，避免旧 latest.json 仍指向 7z 时被“精确命中”抢走。
-        var installer = assets.FirstOrDefault(asset =>
-            asset.Name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase));
-        if (installer is not null)
+        return ProxySites.FirstOrDefault(item =>
+            string.Equals(item.Code, code, StringComparison.OrdinalIgnoreCase))
+            ?? ProxySites[0];
+    }
+
+    private static string BuildUrl(GitHubProxySite site, string url)
+    {
+        if (string.IsNullOrWhiteSpace(site.UrlPrefix) || !Uri.TryCreate(url, UriKind.Absolute, out var uri))
         {
-            return installer;
+            return url;
         }
 
-        if (!string.IsNullOrWhiteSpace(artifactName))
+        // 这些代理是“前缀 + 完整 GitHub URL”模式，仅代理 github.com 相关链接。
+        if (!string.Equals(uri.Host, "github.com", StringComparison.OrdinalIgnoreCase))
         {
-            var exact = assets.FirstOrDefault(asset =>
-                string.Equals(asset.Name, artifactName, StringComparison.OrdinalIgnoreCase));
-            if (exact is not null)
-            {
-                return exact;
-            }
+            return url;
         }
 
-        return assets.FirstOrDefault(asset =>
-                asset.Name.EndsWith(".7z", StringComparison.OrdinalIgnoreCase));
+        return site.UrlPrefix + url;
+    }
+
+    private static string? BuildArtifactUrl(GitHubProxySite site, string latestTag, string? artifactName)
+    {
+        if (string.IsNullOrWhiteSpace(artifactName))
+        {
+            return null;
+        }
+
+        var baseUrl = string.Equals(latestTag, "latest", StringComparison.OrdinalIgnoreCase)
+            ? $"{ReleasesUrl}/latest/download/{artifactName}"
+            : $"{ReleasesUrl}/download/{latestTag}/{artifactName}";
+        return BuildUrl(site, baseUrl);
     }
 
     private static string GetCurrentVersion()
@@ -170,16 +203,6 @@ internal sealed class GitHubUpdateService
         return string.IsNullOrWhiteSpace(normalized) ? "0.0.0" : normalized;
     }
 
-    internal sealed record GitHubReleaseDto(
-        [property: JsonPropertyName("tag_name")] string TagName,
-        [property: JsonPropertyName("html_url")] string HtmlUrl,
-        [property: JsonPropertyName("assets")] IReadOnlyList<GitHubReleaseAssetDto> Assets);
-
-    internal sealed record GitHubReleaseAssetDto(
-        [property: JsonPropertyName("name")] string Name,
-        [property: JsonPropertyName("browser_download_url")] string BrowserDownloadUrl,
-        [property: JsonPropertyName("size")] long Size);
-
     internal sealed record GitHubReleaseMetadataDto(
         string? Version,
         string? Tag,
@@ -188,11 +211,15 @@ internal sealed class GitHubUpdateService
         string? ArtifactType,
         string? ArtifactSha256,
         IReadOnlyList<string>? Changelog);
+
+    internal sealed record GitHubProxySite(
+        string Code,
+        string DisplayName,
+        string? UrlPrefix);
 }
 
 // JsonSerializerDefaults.Web 保持旧版反射序列化语义：camelCase + 大小写不敏感，
 // latest.json 的字段（version/tag/artifactName...）依赖该命名策略。
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
-[JsonSerializable(typeof(GitHubUpdateService.GitHubReleaseDto))]
 [JsonSerializable(typeof(GitHubUpdateService.GitHubReleaseMetadataDto))]
 internal sealed partial class GitHubUpdateJsonContext : JsonSerializerContext;

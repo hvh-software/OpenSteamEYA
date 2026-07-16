@@ -56,6 +56,15 @@ public sealed partial class SettingsPage : Page, INotifyPropertyChanged
                 _syncing = false;
             }
 
+            var updateProxy = UpdateProxyComboBox.SelectedItem;
+            if (updateProxy is not null)
+            {
+                _syncing = true;
+                UpdateProxyComboBox.SelectedItem = null;
+                UpdateProxyComboBox.SelectedItem = updateProxy;
+                _syncing = false;
+            }
+
             // 未设置时 SteamPathText 显示的是本地化占位文案，需随语言刷新（已设置时是中性路径，刷新无副作用）。
             UpdateSteamPathText();
         });
@@ -83,8 +92,10 @@ public sealed partial class SettingsPage : Page, INotifyPropertyChanged
         _syncing = true;
         try
         {
+            var settings = AppState.SettingsService.Load();
             LanguageComboBox.SelectedItem = FindByTag(LanguageComboBox, Loc.CurrentCode);
-            ThemeComboBox.SelectedItem = FindByTag(ThemeComboBox, AppState.SettingsService.Load().Theme) ?? ThemeComboBox.Items[0];
+            ThemeComboBox.SelectedItem = FindByTag(ThemeComboBox, settings.Theme) ?? ThemeComboBox.Items[0];
+            UpdateProxyComboBox.SelectedItem = FindByTag(UpdateProxyComboBox, settings.UpdateProxySite) ?? UpdateProxyComboBox.Items[0];
         }
         finally
         {
@@ -135,6 +146,51 @@ public sealed partial class SettingsPage : Page, INotifyPropertyChanged
             "Dark" => ElementTheme.Dark,
             _ => ElementTheme.Default
         });
+    }
+
+    private void UpdateProxyComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncing || (UpdateProxyComboBox.SelectedItem as ComboBoxItem)?.Tag is not string proxyCode)
+        {
+            return;
+        }
+
+        var settings = AppState.SettingsService.Load();
+        settings.UpdateProxySite = proxyCode;
+        AppState.SettingsService.Save(settings);
+        AppState.UpdateService.SetProxySite(proxyCode);
+    }
+
+    private async void UpdateProxyLatencyButton_Click(object sender, RoutedEventArgs e)
+    {
+        var proxyCode = (UpdateProxyComboBox.SelectedItem as ComboBoxItem)?.Tag as string;
+        if (string.IsNullOrWhiteSpace(proxyCode))
+        {
+            return;
+        }
+
+        UpdateProxyLatencyButton.IsEnabled = false;
+        AppState.ShowStatus(Loc.T("Settings_UpdateProxy_Testing"), InfoBarSeverity.Informational);
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var elapsed = await AppState.UpdateService.ProbeLatencyAsync(proxyCode, cts.Token);
+            AppState.ShowStatus(
+                Loc.Tf("Settings_UpdateProxy_LatencyResult_Format", Math.Round(elapsed.TotalMilliseconds)),
+                InfoBarSeverity.Success);
+        }
+        catch (OperationCanceledException)
+        {
+            AppState.ShowStatus(Loc.T("Settings_UpdateProxy_LatencyTimeout"), InfoBarSeverity.Warning);
+        }
+        catch (Exception ex)
+        {
+            AppState.ShowStatus(Loc.Tf("Settings_UpdateProxy_LatencyFailed_Format", ex.Message), InfoBarSeverity.Error);
+        }
+        finally
+        {
+            UpdateProxyLatencyButton.IsEnabled = true;
+        }
     }
 
     /// <summary>手动更改上号使用的 Steam 安装目录（多 Steam 时指定要用哪一个）。选择器+校验+持久化都在协调器里。</summary>

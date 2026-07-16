@@ -115,6 +115,9 @@ internal sealed class AppSettings
 
     /// <summary>CS2 设置同步的「来源账号」SteamID64；空表示未选择。详见 <see cref="Cs2CloudService"/>。</summary>
     public string? Cs2SyncSourceSteamId { get; set; }
+
+    /// <summary>更新检查使用的 GitHub 站点代码（direct / ghproxy.net / ghfast.top）。</summary>
+    public string UpdateProxySite { get; set; } = "direct";
 }
 
 // 与账号历史一致用 source generator：JsonSerializerDefaults.Web（camelCase、大小写不敏感），AOT 下可读写。
