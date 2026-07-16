@@ -25,6 +25,10 @@ dotnet restore $projectPath -r $Runtime -p:Platform=x64
 Ensure-Success "dotnet restore"
 
 Write-Host "[2/3] Publishing..."
+# dotnet publish --output 只合并不清空：先清掉旧产物，避免上次的托管回退 DLL 集残留并被打进安装包。
+if (Test-Path -LiteralPath $publishDir) {
+    Remove-Item -LiteralPath $publishDir -Recurse -Force
+}
 dotnet publish $projectPath `
   --configuration $Configuration `
   --runtime $Runtime `
@@ -32,8 +36,8 @@ dotnet publish $projectPath `
   -p:Platform=x64 `
   --output $publishDir `
   -p:Version=$Version `
-  -p:FileVersion=$Version.0 `
-  -p:AssemblyVersion=$Version.0 `
+  -p:FileVersion="$Version.0" `
+  -p:AssemblyVersion="$Version.0" `
     -p:InformationalVersion=v$Version+local
 if ($LASTEXITCODE -ne 0) {
     Write-Warning "AOT publish failed, retrying with PublishAot=false for local packaging."
@@ -45,8 +49,8 @@ if ($LASTEXITCODE -ne 0) {
       --output $publishDir `
       -p:PublishAot=false `
       -p:Version=$Version `
-      -p:FileVersion=$Version.0 `
-      -p:AssemblyVersion=$Version.0 `
+      -p:FileVersion="$Version.0" `
+      -p:AssemblyVersion="$Version.0" `
       -p:InformationalVersion=v$Version+local
     Ensure-Success "dotnet publish (PublishAot=false)"
 }
@@ -59,13 +63,16 @@ foreach ($pattern in @(
     Get-ChildItem -LiteralPath $publishDir -Filter $pattern -File | Remove-Item -Force
 }
 
+# Inno Setup 6 是 32 位应用，默认装到 Program Files (x86)；IS7 x64 版才在 Program Files。两个 hive 都探。
 $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
 if (-not $iscc) {
     foreach ($candidate in @(
-        (Join-Path $env:ProgramFiles "Inno Setup 6\ISCC.exe"),
-        (Join-Path $env:ProgramFiles "Inno Setup 7\ISCC.exe")
+        (Join-Path $env:ProgramFiles "Inno Setup 7\ISCC.exe"),
+        (Join-Path ${env:ProgramFiles(x86)} "Inno Setup 7\ISCC.exe"),
+        (Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"),
+        (Join-Path $env:ProgramFiles "Inno Setup 6\ISCC.exe")
     )) {
-        if (Test-Path -LiteralPath $candidate) {
+        if ($candidate -and (Test-Path -LiteralPath $candidate)) {
             $iscc = $candidate
             break
         }

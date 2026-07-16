@@ -128,6 +128,7 @@
     "About_Update_InstallerLaunchFailed": "安装器启动失败，请前往发布页手动下载。",
     "About_Update_InstallerLaunched": "安装器已启动，请按向导完成更新安装。",
     "About_Update_DownloadFailed_Format": "下载安装包失败：{0}",
+    "About_Update_DownloadCanceled": "已取消下载。",
     "Settings_Title": "设置",
     "Settings_Subtitle": "个性化语言、主题与数据。",
     "Settings_Language_Section": "语言",

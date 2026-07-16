@@ -37,33 +37,44 @@ jobs:
       - name: Generate release metadata
         id: meta
         shell: pwsh
+        # 通过 env 传入不可信 / 上下文输入，避免 ${{ }} 直接插值进脚本导致命令注入。
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          RUN_NUMBER: ${{ github.run_number }}
         run: |
           New-Item -ItemType Directory -Force -Path .\artifacts | Out-Null
 
-          $eventName = "${{ github.event_name }}"
-          $refType = "${{ github.ref_type }}"
-          $refName = "${{ github.ref_name }}"
-          $inputVersion = "${{ github.event.inputs.version }}"
+          $eventName = $env:EVENT_NAME
+          $refType = $env:REF_TYPE
+          $refName = $env:REF_NAME
+          $inputVersion = $env:INPUT_VERSION
 
           if ($eventName -eq "push" -and $refType -eq "tag" -and $refName.StartsWith("v")) {
             $tag = $refName
             $version = $refName.Substring(1)
           }
           elseif (-not [string]::IsNullOrWhiteSpace($inputVersion)) {
-            $version = $inputVersion.Trim()
-            if ($version.StartsWith("v")) {
-              $version = $version.Substring(1)
-            }
-
+            $version = ($inputVersion.Trim() -replace '^[vV]', '')
             $tag = "v$version"
           }
           else {
-            $version = "0.1.${{ github.run_number }}"
+            $version = "0.1.$($env:RUN_NUMBER)"
             $tag = "v$version"
           }
 
+          # 版本号必须是 X.Y.Z：非法值（预发布 tag、四段号、拼写错误）在此立即失败，
+          # 而不是深入到 AOT publish 才因 AssemblyVersion 非法而报 CS7034。
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Version must be X.Y.Z (e.g. 0.1.42), got '$version' from ref/input."
+          }
+
           $shortSha = "${{ github.sha }}".Substring(0, 7)
-          $previousTag = git tag --list "v*" --sort=-v:refname | Select-Object -First 1
+          # 排除正在发布的这个 tag：tag-push 时 checkout 已带上该 tag，否则它会被选成「上一个 tag」，
+          # 使 previousTag..HEAD 为空、changelog 永远退化成占位符。
+          $previousTag = git tag --list "v*" --sort=-v:refname | Where-Object { $_ -ne $tag } | Select-Object -First 1
 
           if ([string]::IsNullOrWhiteSpace($previousTag)) {
             $logRange = "HEAD"
@@ -143,19 +154,23 @@ jobs:
             Get-ChildItem -LiteralPath $publishDir -Filter $pattern -File | Remove-Item -Force
           }
 
+          # Inno Setup 6 是 32 位应用，默认装到 Program Files (x86)；IS7 x64 版才在 Program Files。
+          # 两个 hive、两个大版本都探一遍。
           $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
           if (-not $iscc) {
             foreach ($candidate in @(
-              (Join-Path $env:ProgramFiles "Inno Setup 6\ISCC.exe"),
-              (Join-Path $env:ProgramFiles "Inno Setup 7\ISCC.exe")
+              (Join-Path $env:ProgramFiles "Inno Setup 7\ISCC.exe"),
+              (Join-Path ${env:ProgramFiles(x86)} "Inno Setup 7\ISCC.exe"),
+              (Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"),
+              (Join-Path $env:ProgramFiles "Inno Setup 6\ISCC.exe")
             )) {
-              if (Test-Path -LiteralPath $candidate) {
+              if ($candidate -and (Test-Path -LiteralPath $candidate)) {
                 $iscc = $candidate
                 break
               }
             }
           }
-          if (-not (Test-Path -LiteralPath $iscc)) {
+          if (-not $iscc) {
             throw "Inno Setup compiler (ISCC.exe) was not found on the runner."
           }
 
@@ -217,11 +232,23 @@ jobs:
           $artifact = "${{ steps.package.outputs.artifact_path }}"
           $metadata = "${{ steps.package.outputs.metadata_path }}"
 
-          if (gh release view $tag --json tagName | Out-Null) {
+          # 只有当本 tag 是所有 v* 里的最高版本时才标记为 Latest，否则重发旧版本会把
+          # releases/latest/download/latest.json 指向旧版，客户端读到过期元数据。
+          # 与 $tag 取并集：workflow_dispatch 时本地尚无该 tag（由 gh 远端创建），只比现有 tag 会误判。
+          $allTags = @(git tag --list "v*") + $tag | Select-Object -Unique
+          $highest = $allTags | Sort-Object { [version]($_.Substring(1)) } -Descending | Select-Object -First 1
+          $isLatest = if ($highest -eq $tag) { "true" } else { "false" }
+
+          # gh release view 成功时无 stdout，不能用管道结果判断；显式查 tagName 是否存在。
+          $exists = $false
+          $existing = gh release view $tag --json tagName --jq ".tagName" 2>$null
+          if ($LASTEXITCODE -eq 0 -and $existing -eq $tag) { $exists = $true }
+
+          if ($exists) {
             gh release upload $tag $artifact --clobber
             gh release upload $tag $metadata --clobber
-            gh release edit $tag --title $title --notes-file $notes --target $target
+            gh release edit $tag --title $title --notes-file $notes --target $target --latest=$isLatest
           }
           else {
-            gh release create $tag $artifact $metadata --target $target --title $title --notes-file $notes
+            gh release create $tag $artifact $metadata --target $target --title $title --notes-file $notes --latest=$isLatest
           }

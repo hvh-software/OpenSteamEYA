@@ -125,7 +125,7 @@ internal sealed class AppSettings
     /// <summary>CS2 设置同步的「来源账号」SteamID64；空表示未选择。详见 <see cref="Cs2CloudService"/>。</summary>
     public string? Cs2SyncSourceSteamId { get; set; }
 
-    /// <summary>更新检查使用的 GitHub 站点代码（direct / ghproxy.net / ghfast.top）。</summary>
+    /// <summary>更新检查使用的 GitHub 站点代码（direct / gh-proxy.org / v4.gh-proxy.org / v6.gh-proxy.org / cdn.gh-proxy.org），与 GitHubUpdateService.ProxySites 保持一致；未知值回退 direct。</summary>
     public string UpdateProxySite { get; set; } = "direct";
 }
 

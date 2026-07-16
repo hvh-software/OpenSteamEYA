@@ -10,6 +10,10 @@ internal sealed class UpdateInstallerService
 
     private const int DownloadBufferSize = 80 * 1024;
 
+    // 单次读取之间无进展多久算「卡死」。ResponseHeadersRead 下 HttpClient.Timeout 只约束响应头阶段，
+    // 响应体的 ReadAsync 不受其约束——经代理站中转时对端可能发完头就静默挂起，故需自建空闲超时。
+    private static readonly TimeSpan DownloadIdleTimeout = TimeSpan.FromSeconds(60);
+
     public async Task<string> DownloadInstallerAsync(
         GitHubUpdateInfo update,
         IProgress<UpdateDownloadProgress>? progress = null,
@@ -32,37 +36,71 @@ internal sealed class UpdateInstallerService
         var targetPath = Path.Combine(tempRoot, fileName);
         var downloadPath = targetPath + ".downloading";
 
-        using var response = await HttpClient.GetAsync(
-            update.ArtifactUrl,
-            HttpCompletionOption.ResponseHeadersRead,
-            cancellationToken);
-        response.EnsureSuccessStatusCode();
+        // 空闲超时：把用户取消与「每次成功读取后重置的 60s 无进展」合成一个令牌。用每段空闲计时而非总时长，
+        // 避免慢速链路上的大文件被总时长上限误杀。
+        using var idleCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        idleCts.CancelAfter(DownloadIdleTimeout);
+        var idleToken = idleCts.Token;
 
-        var totalBytes = response.Content.Headers.ContentLength;
-
-        await using (var source = await response.Content.ReadAsStreamAsync(cancellationToken))
-        await using (var target = new FileStream(downloadPath, FileMode.Create, FileAccess.Write, FileShare.None))
+        try
         {
-            await CopyWithProgressAsync(source, target, totalBytes, progress, cancellationToken);
-        }
+            using var response = await HttpClient.GetAsync(
+                update.ArtifactUrl,
+                HttpCompletionOption.ResponseHeadersRead,
+                idleToken);
+            response.EnsureSuccessStatusCode();
 
-        if (!string.IsNullOrWhiteSpace(update.ArtifactSha256))
-        {
-            var actualHash = ComputeSha256(downloadPath);
-            if (!string.Equals(actualHash, update.ArtifactSha256, StringComparison.OrdinalIgnoreCase))
+            var totalBytes = response.Content.Headers.ContentLength;
+
+            await using (var source = await response.Content.ReadAsStreamAsync(idleToken))
+            await using (var target = new FileStream(downloadPath, FileMode.Create, FileAccess.Write, FileShare.None))
             {
-                File.Delete(downloadPath);
-                throw new InvalidOperationException("安装包校验失败，请稍后重试。");
+                await CopyWithProgressAsync(source, target, totalBytes, progress, idleCts, cancellationToken);
+            }
+
+            if (!string.IsNullOrWhiteSpace(update.ArtifactSha256))
+            {
+                var actualHash = ComputeSha256(downloadPath);
+                if (!string.Equals(actualHash, update.ArtifactSha256, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException("安装包校验失败，请稍后重试。");
+                }
+            }
+
+            if (File.Exists(targetPath))
+            {
+                File.Delete(targetPath);
+            }
+
+            File.Move(downloadPath, targetPath);
+            return targetPath;
+        }
+        catch (OperationCanceledException) when (idleToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            // 空闲超时（非用户取消）：转成明确的超时异常，供 UI 区分文案。
+            TryDeletePartial(downloadPath);
+            throw new TimeoutException("下载超时：长时间无数据，请检查网络或更换更新站点后重试。");
+        }
+        catch
+        {
+            TryDeletePartial(downloadPath);
+            throw;
+        }
+    }
+
+    private static void TryDeletePartial(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
             }
         }
-
-        if (File.Exists(targetPath))
+        catch (Exception ex)
         {
-            File.Delete(targetPath);
+            AppLog.Error("清理未完成的更新下载临时文件失败。", ex);
         }
-
-        File.Move(downloadPath, targetPath);
-        return targetPath;
     }
 
     public bool LaunchInstaller(string installerPath)
@@ -151,6 +189,7 @@ internal sealed class UpdateInstallerService
         Stream target,
         long? totalBytes,
         IProgress<UpdateDownloadProgress>? progress,
+        CancellationTokenSource idleCts,
         CancellationToken cancellationToken)
     {
         var buffer = new byte[DownloadBufferSize];
@@ -158,11 +197,14 @@ internal sealed class UpdateInstallerService
 
         while (true)
         {
-            var read = await source.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken);
+            var read = await source.ReadAsync(buffer.AsMemory(0, buffer.Length), idleCts.Token);
             if (read == 0)
             {
                 break;
             }
+
+            // 每读到一段就把空闲超时窗口重置，只在「持续无进展」时才触发取消。
+            idleCts.CancelAfter(DownloadIdleTimeout);
 
             await target.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
             received += read;

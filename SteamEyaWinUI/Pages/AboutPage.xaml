@@ -96,11 +96,19 @@
                             Height="6"
                             IsIndeterminate="False"
                             Value="0" />
-                        <TextBlock
-                            x:Name="UpdateDownloadProgressText"
-                            Style="{StaticResource FieldLabelTextStyle}"
-                            Text=""
-                            TextWrapping="Wrap" />
+                        <Grid>
+                            <TextBlock
+                                x:Name="UpdateDownloadProgressText"
+                                VerticalAlignment="Center"
+                                Style="{StaticResource FieldLabelTextStyle}"
+                                Text=""
+                                TextWrapping="Wrap" />
+                            <Button
+                                x:Name="CancelDownloadButton"
+                                HorizontalAlignment="Right"
+                                Click="CancelDownloadButton_Click"
+                                Content="{x:Bind Strings.Get('Common_Cancel'), Mode=OneWay}" />
+                        </Grid>
                     </StackPanel>
                 </StackPanel>
             </Border>

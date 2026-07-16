@@ -128,6 +128,7 @@
     "About_Update_InstallerLaunchFailed": "Failed to launch installer. Please download it from Releases manually.",
     "About_Update_InstallerLaunched": "Installer launched. Follow the setup wizard to finish updating.",
     "About_Update_DownloadFailed_Format": "Failed to download installer: {0}",
+    "About_Update_DownloadCanceled": "Download canceled.",
     "Settings_Title": "Settings",
     "Settings_Subtitle": "Language, theme, and data.",
     "Settings_Language_Section": "Language",

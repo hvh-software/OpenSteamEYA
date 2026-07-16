@@ -15,6 +15,7 @@ public sealed partial class AboutPage : Page, INotifyPropertyChanged
     private bool _isDownloadingUpdate;
     private long _downloadBytesReceived;
     private long? _downloadTotalBytes;
+    private CancellationTokenSource? _downloadCts;
 
     public AboutPage()
     {
@@ -102,6 +103,7 @@ public sealed partial class AboutPage : Page, INotifyPropertyChanged
         _isDownloadingUpdate = true;
         _downloadBytesReceived = 0;
         _downloadTotalBytes = null;
+        _downloadCts = new CancellationTokenSource();
         Render();
 
         try
@@ -115,7 +117,8 @@ public sealed partial class AboutPage : Page, INotifyPropertyChanged
                 Render();
             });
 
-            var installerPath = await AppState.UpdateInstallerService.DownloadInstallerAsync(update, progress);
+            var installerPath = await AppState.UpdateInstallerService.DownloadInstallerAsync(
+                update, progress, _downloadCts.Token);
             AppState.ShowStatus(Loc.T("About_Update_Downloaded"), InfoBarSeverity.Success);
 
             if (!AppState.UpdateInstallerService.LaunchInstaller(installerPath))
@@ -131,17 +134,32 @@ public sealed partial class AboutPage : Page, INotifyPropertyChanged
             AppState.UpdateInstallerService.ForceCloseOtherInstances(current.ProcessName, current.Id);
             current.Kill(entireProcessTree: true);
         }
+        catch (OperationCanceledException)
+        {
+            AppState.ShowStatus(Loc.T("About_Update_DownloadCanceled"), InfoBarSeverity.Informational);
+        }
+        catch (TimeoutException ex)
+        {
+            AppState.ShowStatus(ex.Message, InfoBarSeverity.Warning);
+        }
         catch (Exception ex)
         {
             AppState.ShowStatus(Loc.Tf("About_Update_DownloadFailed_Format", ex.Message), InfoBarSeverity.Error);
         }
         finally
         {
+            _downloadCts?.Dispose();
+            _downloadCts = null;
             _isDownloadingUpdate = false;
             _downloadBytesReceived = 0;
             _downloadTotalBytes = null;
             Render();
         }
+    }
+
+    private void CancelDownloadButton_Click(object sender, RoutedEventArgs e)
+    {
+        _downloadCts?.Cancel();
     }
 
     private async void OpenReleaseButton_Click(object sender, RoutedEventArgs e)

@@ -11,7 +11,9 @@
 #endif
 
 [Setup]
-AppId={{A49BF24E-5D48-4CF6-9A6F-D205668123B5}}
+; 单个闭括号：{{ 转义成字面 {，末尾单 } 收尾，得到 {GUID}。写成 }} 会多出一个字面 }，
+; 让卸载注册键变成 {GUID}}_is1；AppId 一旦随首个安装包发布就不可再改，故务必保持规范形式。
+AppId={{A49BF24E-5D48-4CF6-9A6F-D205668123B5}
 AppName=SteamEYA
 AppVersion={#AppVersion}
 AppPublisher=hvh-software
@@ -25,6 +27,8 @@ Compression=lzma2/ultra64
 SolidCompression=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
+; 应用最低要求 Windows 10 1809（net10.0-windows / Windows App SDK）；否则会装到跑不起来的旧系统。
+MinVersion=10.0.17763
 PrivilegesRequired=lowest
 WizardStyle=modern
 ChangesAssociations=no
