@@ -64,6 +64,12 @@ public sealed partial class AboutPage : Page, INotifyPropertyChanged
             return;
         }
 
+        if (!update.IsUpdateAvailable)
+        {
+            AppState.ShowStatus(Loc.Tf("About_Update_UpToDate_Format", update.LatestTag), InfoBarSeverity.Success);
+            return;
+        }
+
         if (_isDownloadingUpdate)
         {
             return;
@@ -156,7 +162,10 @@ public sealed partial class AboutPage : Page, INotifyPropertyChanged
         UpdateCheckingRing.IsActive = isChecking;
         UpdateCheckingRing.Visibility = isChecking ? Visibility.Visible : Visibility.Collapsed;
         CheckUpdateButton.IsEnabled = !isChecking && !_isDownloadingUpdate;
-        DownloadUpdateButton.IsEnabled = !isChecking && !_isDownloadingUpdate && !string.IsNullOrWhiteSpace(update?.ArtifactUrl);
+        DownloadUpdateButton.IsEnabled = !isChecking &&
+            !_isDownloadingUpdate &&
+            update is { IsUpdateAvailable: true } &&
+            !string.IsNullOrWhiteSpace(update.ArtifactUrl);
 
         UpdateDownloadProgressPanel.Visibility = _isDownloadingUpdate ? Visibility.Visible : Visibility.Collapsed;
         if (_isDownloadingUpdate)
