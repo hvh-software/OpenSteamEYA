@@ -199,6 +199,21 @@ jobs:
           }
 
           $sha256 = (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
+
+          # 把 SHA-256 附到 Release 说明（说明经 github.com 官方 TLS 展示，可信）。
+          # 经代理站下载安装包的用户可据此手动核验，抵御代理投毒。
+          Add-Content -LiteralPath "${{ steps.meta.outputs.notes_path }}" -Encoding UTF8 -Value @(
+            ""
+            "## 文件校验 (SHA-256)"
+            "下载后建议核验安装包完整性（尤其是经代理站下载时）。PowerShell 运行："
+            '```'
+            "Get-FileHash .\$artifactName -Algorithm SHA256"
+            '```'
+            "应与下方一致："
+            "- ``$artifactName``"
+            "  ``$sha256``"
+          )
+
           $changelog = @(Get-Content -LiteralPath "${{ steps.meta.outputs.changelog_path }}")
           $metadata = [ordered]@{
             version = "${{ steps.meta.outputs.version }}"
