@@ -12,16 +12,17 @@
                 <ResourceDictionary x:Key="Default">
                     <SolidColorBrush x:Key="LoadoutSectionBrush" Color="#78202020" />
                     <SolidColorBrush x:Key="LoadoutStrokeBrush" Color="#42FFFFFF" />
+                    <SolidColorBrush x:Key="LoadoutWeaponCardBackgroundBrush" Color="#1A000000" />
                 </ResourceDictionary>
                 <ResourceDictionary x:Key="Light">
                     <SolidColorBrush x:Key="LoadoutSectionBrush" Color="#8AFFFFFF" />
                     <SolidColorBrush x:Key="LoadoutStrokeBrush" Color="#36FFFFFF" />
+                    <SolidColorBrush x:Key="LoadoutWeaponCardBackgroundBrush" Color="#80000000" />
                 </ResourceDictionary>
             </ResourceDictionary.ThemeDictionaries>
-            <SolidColorBrush x:Key="LoadoutWeaponCardBackgroundBrush" Color="#1A000000" />
             <SolidColorBrush x:Key="LoadoutWeaponCardBorderBrush" Color="#4D000000" />
             <Style x:Key="LoadoutCellBorderStyle" TargetType="Border">
-                <Setter Property="Background" Value="{StaticResource LoadoutWeaponCardBackgroundBrush}" />
+                <Setter Property="Background" Value="{ThemeResource LoadoutWeaponCardBackgroundBrush}" />
                 <Setter Property="BorderBrush" Value="{StaticResource LoadoutWeaponCardBorderBrush}" />
                 <Setter Property="BorderThickness" Value="1" />
                 <Setter Property="CornerRadius" Value="8" />
@@ -47,7 +48,7 @@
                     Height="72"
                     Tag="{x:Bind}"
                     CornerRadius="8"
-                    Background="{StaticResource LoadoutWeaponCardBackgroundBrush}"
+                    Background="{ThemeResource LoadoutWeaponCardBackgroundBrush}"
                     BorderBrush="{StaticResource LoadoutWeaponCardBorderBrush}"
                     BorderThickness="1"
                     PointerPressed="PoolItem_PointerPressed"
