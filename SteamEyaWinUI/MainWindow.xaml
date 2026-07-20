@@ -22,6 +22,7 @@
                     Width="18"
                     Height="18" />
                 <TextBlock
+                    x:Name="AppTitleText"
                     Text="SteamEYA"
                     Style="{StaticResource CaptionTextBlockStyle}"
                     VerticalAlignment="Center" />

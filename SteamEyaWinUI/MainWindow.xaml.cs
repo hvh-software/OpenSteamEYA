@@ -1,5 +1,7 @@
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using Microsoft.UI.Composition;
+using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -9,12 +11,30 @@ using SteamEyaWinUI.Localization;
 using SteamEyaWinUI.Models;
 using SteamEyaWinUI.Pages;
 using SteamEyaWinUI.Services;
+using WinRT;
 using Windows.Graphics;
 
 namespace SteamEyaWinUI;
 
 public sealed partial class MainWindow : Window
 {
+    private static readonly string[] FontResourceKeys =
+    [
+        "ContentControlThemeFontFamily",
+        "TextControlThemeFontFamily"
+    ];
+
+    private static readonly (string Key, double Factor)[] GlassSurfaceResources =
+    [
+        ("CardBackgroundFillColorDefaultBrush", 1.0),
+        ("CardBackgroundFillColorSecondaryBrush", 0.86),
+        ("ControlFillColorDefaultBrush", 0.78),
+        ("ControlFillColorSecondaryBrush", 0.66),
+        ("ControlFillColorTertiaryBrush", 0.52),
+        ("ControlFillColorInputActiveBrush", 0.92),
+        ("LayerFillColorDefaultBrush", 0.72)
+    ];
+
     private const int InitialWindowWidth = 1280;
     private const int InitialWindowHeight = 860;
     private const int MinWindowWidth = 1180;
@@ -27,6 +47,14 @@ public sealed partial class MainWindow : Window
     // Informational/Success 状态若干秒后自动收起；Warning/Error 常驻，直到被替换或用户手动关闭。
     private static readonly TimeSpan StatusAutoDismissDelay = TimeSpan.FromSeconds(6);
     private readonly DispatcherQueueTimer _statusDismissTimer;
+    private readonly FontFamily _defaultFontFamily;
+    private readonly Dictionary<string, SolidColorBrush> _glassSurfaceBrushes = [];
+    private FontFamily _currentFontFamily = null!;
+    private DesktopAcrylicController? _acrylicController;
+    private SystemBackdropConfiguration? _backdropConfiguration;
+    private bool _glassEffectEnabled;
+    private int _backgroundOpacity = 72;
+    private ElementTheme _requestedTheme = ElementTheme.Default;
 
     public static MainWindow? Instance { get; private set; }
 
@@ -38,13 +66,17 @@ public sealed partial class MainWindow : Window
         Instance = this;
 
         InitializeComponent();
-        SystemBackdrop = new MicaBackdrop();
+        Activated += OnWindowActivated;
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
         SetWindowIcon();
         TitleVersionText.Text = $"v{GitHubUpdateService.CurrentVersion}";
 
-        ApplyTheme(ParseTheme(AppState.SettingsService.Load().Theme));
+        _defaultFontFamily = RootNavigationView.FontFamily;
+        var settings = AppState.SettingsService.Load();
+        ApplyTheme(ParseTheme(settings.Theme));
+        ApplyGlassAppearance(settings.GlassEffectEnabled, settings.BackgroundOpacity);
+        ApplyFontFamily(settings.FontFamily);
         RefreshNavText();
         Loc.LanguageChanged += RefreshNavText;
 
@@ -57,6 +89,17 @@ public sealed partial class MainWindow : Window
         AppState.BusyChanged += OnBusyChanged;
         AppState.UpdateStateChanged += RefreshUpdateBadge;
         RefreshUpdateBadge();
+
+        ContentFrame.Navigated += (_, _) =>
+            DispatcherQueue.TryEnqueue(() => ApplyFontToVisualTree(Content, _currentFontFamily));
+        RootNavigationView.ActualThemeChanged += (_, _) =>
+        {
+            UpdateTitleBarButtonColors();
+            if (_requestedTheme == ElementTheme.Default)
+            {
+                QueueGlassSurfaceRefresh();
+            }
+        };
 
         ConfigureWindowSize();
 
@@ -75,6 +118,7 @@ public sealed partial class MainWindow : Window
     private async void OnRootNavigationViewLoaded(object sender, RoutedEventArgs e)
     {
         RootNavigationView.Loaded -= OnRootNavigationViewLoaded;
+        ApplyFontToVisualTree(Content, _currentFontFamily);
         try
         {
             await SteamPathCoordinator.EnsureResolvedAsync();
@@ -165,9 +209,231 @@ public sealed partial class MainWindow : Window
     /// <summary>把主题套用到内容根（无打包下 Application.RequestedTheme 不可后置，故走根元素 RequestedTheme）。</summary>
     public void ApplyTheme(ElementTheme theme)
     {
+        _requestedTheme = theme;
         if (Content is FrameworkElement root)
         {
             root.RequestedTheme = theme;
+            UpdateTitleBarButtonColors(theme);
+
+            if (_glassEffectEnabled && theme is ElementTheme.Light or ElementTheme.Dark)
+            {
+                ApplyGlassSurfaceResources(_backgroundOpacity, theme);
+            }
+
+            QueueGlassSurfaceRefresh(theme is ElementTheme.Light or ElementTheme.Dark ? theme : null);
+        }
+    }
+
+    /// <summary>切换 Desktop Acrylic，并用透明表面资源让背景透过控件而不降低文字透明度。</summary>
+    public void ApplyGlassAppearance(bool enabled, int backgroundOpacity)
+    {
+        _glassEffectEnabled = enabled;
+        _backgroundOpacity = Math.Clamp(backgroundOpacity, 0, 100);
+
+        if (enabled)
+        {
+            EnsureAcrylicController();
+            ApplyAcrylicOpacity(_backgroundOpacity);
+            ApplyGlassSurfaceResources(_backgroundOpacity);
+        }
+        else
+        {
+            DisposeAcrylicController();
+            SystemBackdrop = new MicaBackdrop();
+            foreach (var (key, _) in GlassSurfaceResources)
+            {
+                Application.Current.Resources.Remove(key);
+            }
+
+            _glassSurfaceBrushes.Clear();
+        }
+
+        UpdateTitleBarButtonColors();
+    }
+
+    public void ApplyGlassSurfaceOpacity(int opacity)
+    {
+        _backgroundOpacity = Math.Clamp(opacity, 0, 100);
+        if (_glassEffectEnabled)
+        {
+            ApplyAcrylicOpacity(_backgroundOpacity);
+            ApplyGlassSurfaceResources(_backgroundOpacity);
+        }
+    }
+
+    private void EnsureAcrylicController()
+    {
+        if (_acrylicController is not null)
+        {
+            return;
+        }
+
+        if (!DesktopAcrylicController.IsSupported())
+        {
+            SystemBackdrop = new DesktopAcrylicBackdrop();
+            return;
+        }
+
+        SystemBackdrop = null;
+        _backdropConfiguration = new SystemBackdropConfiguration
+        {
+            IsInputActive = true,
+            Theme = GetBackdropTheme()
+        };
+        _acrylicController = new DesktopAcrylicController();
+        _acrylicController.AddSystemBackdropTarget(this.As<ICompositionSupportsSystemBackdrop>());
+        _acrylicController.SetSystemBackdropConfiguration(_backdropConfiguration);
+    }
+
+    private void ApplyAcrylicOpacity(int opacityPercent)
+    {
+        if (_acrylicController is null)
+        {
+            return;
+        }
+
+        var opacity = Math.Clamp(opacityPercent / 100f, 0, 1);
+        var theme = _requestedTheme == ElementTheme.Default ? RootNavigationView.ActualTheme : _requestedTheme;
+        _acrylicController.TintColor = theme == ElementTheme.Light
+            ? Windows.UI.Color.FromArgb(255, 255, 255, 255)
+            : Windows.UI.Color.FromArgb(255, 32, 32, 32);
+        _acrylicController.TintOpacity = opacity;
+        _acrylicController.LuminosityOpacity = opacity;
+    }
+
+    private SystemBackdropTheme GetBackdropTheme() =>
+        (_requestedTheme == ElementTheme.Default ? RootNavigationView.ActualTheme : _requestedTheme) switch
+        {
+            ElementTheme.Light => SystemBackdropTheme.Light,
+            ElementTheme.Dark => SystemBackdropTheme.Dark,
+            _ => SystemBackdropTheme.Default
+        };
+
+    private void UpdateTitleBarButtonColors(ElementTheme? theme = null)
+    {
+        var effectiveTheme = theme is ElementTheme.Light or ElementTheme.Dark
+            ? theme.Value
+            : _requestedTheme == ElementTheme.Default
+                ? RootNavigationView.ActualTheme
+                : _requestedTheme;
+        var foreground = effectiveTheme == ElementTheme.Light
+            ? Windows.UI.Color.FromArgb(255, 0, 0, 0)
+            : Windows.UI.Color.FromArgb(255, 255, 255, 255);
+        var transparent = Windows.UI.Color.FromArgb(0, 0, 0, 0);
+
+        AppWindow.TitleBar.ButtonForegroundColor = foreground;
+        AppWindow.TitleBar.ButtonHoverForegroundColor = foreground;
+        AppWindow.TitleBar.ButtonPressedForegroundColor = foreground;
+        AppWindow.TitleBar.ButtonInactiveForegroundColor = foreground;
+        AppWindow.TitleBar.ButtonBackgroundColor = transparent;
+        AppWindow.TitleBar.ButtonInactiveBackgroundColor = transparent;
+    }
+
+    private void DisposeAcrylicController()
+    {
+        _acrylicController?.Dispose();
+        _acrylicController = null;
+        _backdropConfiguration = null;
+    }
+
+    private void OnWindowActivated(object sender, WindowActivatedEventArgs args)
+    {
+        if (_backdropConfiguration is not null)
+        {
+            _backdropConfiguration.IsInputActive = args.WindowActivationState != WindowActivationState.Deactivated;
+        }
+    }
+
+    private void ApplyGlassSurfaceResources(int opacityPercent, ElementTheme? theme = null)
+    {
+        var effectiveTheme = theme ?? (_requestedTheme == ElementTheme.Default
+            ? RootNavigationView.ActualTheme
+            : _requestedTheme);
+        var baseColor = effectiveTheme == ElementTheme.Light
+            ? Windows.UI.Color.FromArgb(255, 255, 255, 255)
+            : Windows.UI.Color.FromArgb(255, 32, 32, 32);
+
+        foreach (var (key, factor) in GlassSurfaceResources)
+        {
+            var alpha = (byte)Math.Clamp(Math.Round(255 * opacityPercent / 100.0 * factor), 0, 255);
+            var color = Windows.UI.Color.FromArgb(alpha, baseColor.R, baseColor.G, baseColor.B);
+            if (_glassSurfaceBrushes.TryGetValue(key, out var brush))
+            {
+                brush.Color = color;
+            }
+            else
+            {
+                brush = new SolidColorBrush(color);
+                _glassSurfaceBrushes[key] = brush;
+                Application.Current.Resources[key] = brush;
+            }
+        }
+    }
+
+    private void QueueGlassSurfaceRefresh(ElementTheme? theme = null)
+    {
+        DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () =>
+        {
+            if (_glassEffectEnabled)
+            {
+                if (_backdropConfiguration is not null)
+                {
+                    _backdropConfiguration.Theme = GetBackdropTheme();
+                }
+                ApplyAcrylicOpacity(_backgroundOpacity);
+                ApplyGlassSurfaceResources(_backgroundOpacity, theme);
+            }
+        });
+    }
+
+    /// <summary>覆盖 WinUI 控件模板字体资源，并即时刷新当前可视树；图标字体不参与替换。</summary>
+    public void ApplyFontFamily(string? familyName)
+    {
+        var family = string.IsNullOrWhiteSpace(familyName)
+            ? _defaultFontFamily
+            : new FontFamily(familyName);
+
+        _currentFontFamily = family;
+        foreach (var key in FontResourceKeys)
+        {
+            if (string.IsNullOrWhiteSpace(familyName))
+            {
+                Application.Current.Resources.Remove(key);
+            }
+            else
+            {
+                Application.Current.Resources[key] = family;
+            }
+        }
+
+        RootNavigationView.FontFamily = family;
+        ApplyFontToVisualTree(Content, family);
+    }
+
+    private static void ApplyFontToVisualTree(DependencyObject? root, FontFamily family)
+    {
+        if (root is null || root is IconElement)
+        {
+            return;
+        }
+
+        switch (root)
+        {
+            case Control control:
+                control.FontFamily = family;
+                break;
+            case TextBlock textBlock:
+                textBlock.FontFamily = family;
+                break;
+            case RichTextBlock richTextBlock:
+                richTextBlock.FontFamily = family;
+                break;
+        }
+
+        var childCount = VisualTreeHelper.GetChildrenCount(root);
+        for (var index = 0; index < childCount; index++)
+        {
+            ApplyFontToVisualTree(VisualTreeHelper.GetChild(root, index), family);
         }
     }
 
@@ -216,6 +482,8 @@ public sealed partial class MainWindow : Window
 
     private unsafe void OnClosed(object sender, WindowEventArgs args)
     {
+        Activated -= OnWindowActivated;
+        DisposeAcrylicController();
         RemoveWindowSubclass(s_hwnd, &SubclassProc, WindowSubclassId);
     }
 

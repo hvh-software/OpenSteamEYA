@@ -48,6 +48,13 @@ internal sealed class SettingsService
                         settings.Loadout ??= CsLoadoutPreset.Default();
                         settings.Loadout.T ??= new Dictionary<uint, uint>();
                         settings.Loadout.Ct ??= new Dictionary<uint, uint>();
+                        // 旧版保存的是系统字体族名；新版只允许 Assets/Fonts 内置字体 URI。
+                        if (!string.IsNullOrWhiteSpace(settings.FontFamily) &&
+                            !settings.FontFamily.StartsWith("ms-appx:///Assets/Fonts/", StringComparison.OrdinalIgnoreCase))
+                        {
+                            settings.FontFamily = null;
+                        }
+                        settings.BackgroundOpacity = Math.Clamp(settings.BackgroundOpacity, 0, 100);
                         return settings;
                     }
                 }
@@ -105,6 +112,15 @@ internal sealed class AppSettings
 
     /// <summary>主题：Default（跟随系统）/ Light / Dark。</summary>
     public string Theme { get; set; } = "Default";
+
+    /// <summary>全局界面字体族名；null/空表示使用 WinUI 系统默认字体。</summary>
+    public string? FontFamily { get; set; }
+
+    /// <summary>是否使用 Desktop Acrylic 毛玻璃；关闭时使用普通 Mica 背景。</summary>
+    public bool GlassEffectEnabled { get; set; }
+
+    /// <summary>毛玻璃模式下卡片和控件表面的不透明度百分比（0-100）。</summary>
+    public int BackgroundOpacity { get; set; } = 72;
 
     /// <summary>
     /// 已解析并持久化的 Steam 安装目录（含 steam.exe 的根目录）。首次启动自动检测后写入，之后直接复用，
