@@ -74,6 +74,34 @@ internal static class VdfDocument
         }
     }
 
+    // ---------- 读取辅助 ----------
+    // VDF 键大小写在不同 Steam 版本间不稳定，读取一律先精确命中、再忽略大小写扫描。
+    // 字典比较器保持 Ordinal：写盘必须保留原始大小写，改比较器会把仅大小写不同的键静默合并。
+
+    public static object? GetValue(Dictionary<string, object> parent, string key)
+    {
+        if (parent.TryGetValue(key, out var value))
+        {
+            return value;
+        }
+
+        foreach (var (candidate, candidateValue) in parent)
+        {
+            if (string.Equals(candidate, key, StringComparison.OrdinalIgnoreCase))
+            {
+                return candidateValue;
+            }
+        }
+
+        return null;
+    }
+
+    public static Dictionary<string, object>? GetObject(Dictionary<string, object> parent, string key) =>
+        GetValue(parent, key) as Dictionary<string, object>;
+
+    public static string? GetString(Dictionary<string, object> parent, string key) =>
+        GetValue(parent, key) as string;
+
     private static string Write(Dictionary<string, object> document)
     {
         var builder = new StringBuilder();
