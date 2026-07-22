@@ -4,6 +4,8 @@ using System.IO;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using SteamEyaWinUI.Localization;
 using SteamEyaWinUI.Services;
@@ -17,6 +19,7 @@ public sealed partial class SettingsPage : Page, INotifyPropertyChanged
     // 代码设置 ComboBox.SelectedItem 会触发 SelectionChanged，置位以区分“用户选择”与“初始同步”，避免回写/重复应用。
     private bool _syncing;
     private bool _languageItemsBuilt;
+    private bool _fontItemsBuilt;
 
     public SettingsPage()
     {
@@ -35,6 +38,7 @@ public sealed partial class SettingsPage : Page, INotifyPropertyChanged
     {
         base.OnNavigatedTo(e);
         BuildLanguageItems();
+        BuildFontItems();
         SyncFromSettings();
     }
 
@@ -54,6 +58,11 @@ public sealed partial class SettingsPage : Page, INotifyPropertyChanged
                 ThemeComboBox.SelectedItem = null;
                 ThemeComboBox.SelectedItem = theme;
                 _syncing = false;
+            }
+
+            if (FontComboBox.Items.FirstOrDefault() is ComboBoxItem defaultFontItem)
+            {
+                defaultFontItem.Content = Loc.T("Settings_Font_System");
             }
 
             var updateProxy = UpdateProxyComboBox.SelectedItem;
@@ -89,6 +98,50 @@ public sealed partial class SettingsPage : Page, INotifyPropertyChanged
         _languageItemsBuilt = true;
     }
 
+    private void BuildFontItems()
+    {
+        if (_fontItemsBuilt)
+        {
+            return;
+        }
+
+        ReloadFontItems(AppState.SettingsService.Load().FontFamily);
+    }
+
+    private int ReloadFontItems(string? selectedSource)
+    {
+        var wasSyncing = _syncing;
+        _syncing = true;
+        try
+        {
+            FontComboBox.Items.Clear();
+            FontComboBox.Items.Add(new ComboBoxItem
+            {
+                Content = Loc.T("Settings_Font_System"),
+                Tag = ""
+            });
+
+            var fonts = AppFontCatalog.Load();
+            foreach (var font in fonts)
+            {
+                FontComboBox.Items.Add(new ComboBoxItem
+                {
+                    Content = font.DisplayName,
+                    Tag = font.Source,
+                    FontFamily = new FontFamily(font.Source)
+                });
+            }
+
+            _fontItemsBuilt = true;
+            FontComboBox.SelectedItem = FindByTag(FontComboBox, selectedSource ?? "") ?? FontComboBox.Items[0];
+            return fonts.Count;
+        }
+        finally
+        {
+            _syncing = wasSyncing;
+        }
+    }
+
     /// <summary>按当前语言与已保存主题选中对应下拉项；过程中屏蔽 SelectionChanged 处理。</summary>
     private void SyncFromSettings()
     {
@@ -98,6 +151,11 @@ public sealed partial class SettingsPage : Page, INotifyPropertyChanged
             var settings = AppState.SettingsService.Load();
             LanguageComboBox.SelectedItem = FindByTag(LanguageComboBox, Loc.CurrentCode);
             ThemeComboBox.SelectedItem = FindByTag(ThemeComboBox, settings.Theme) ?? ThemeComboBox.Items[0];
+            FontComboBox.SelectedItem = FindByTag(FontComboBox, settings.FontFamily ?? "") ?? FontComboBox.Items[0];
+            GlassEffectToggle.IsOn = settings.GlassEffectEnabled;
+            BackgroundOpacitySlider.Value = settings.BackgroundOpacity;
+            BackgroundOpacitySlider.IsEnabled = settings.GlassEffectEnabled;
+            UpdateBackgroundOpacityText(settings.BackgroundOpacity);
             UpdateProxyComboBox.SelectedItem = FindByTag(UpdateProxyComboBox, settings.UpdateProxySite) ?? UpdateProxyComboBox.Items[0];
         }
         finally
@@ -149,6 +207,90 @@ public sealed partial class SettingsPage : Page, INotifyPropertyChanged
             "Dark" => ElementTheme.Dark,
             _ => ElementTheme.Default
         });
+    }
+
+    private void FontComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncing || (FontComboBox.SelectedItem as ComboBoxItem)?.Tag is not string familyName)
+        {
+            return;
+        }
+
+        var settings = AppState.SettingsService.Load();
+        settings.FontFamily = string.IsNullOrWhiteSpace(familyName) ? null : familyName;
+        AppState.SettingsService.Save(settings);
+        MainWindow.Instance?.ApplyFontFamily(settings.FontFamily);
+    }
+
+    private void OpenFontFolderButton_Click(object sender, RoutedEventArgs e)
+    {
+        var folder = AppFontCatalog.FontFolderPath;
+        try
+        {
+            Directory.CreateDirectory(folder);
+            Process.Start(new ProcessStartInfo("explorer.exe", $"\"{folder}\"") { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("打开字体目录失败。", ex);
+            AppState.ShowStatus(Loc.T("Settings_Font_OpenFolderFail"), InfoBarSeverity.Error);
+        }
+    }
+
+    private void RefreshFontListButton_Click(object sender, RoutedEventArgs e)
+    {
+        var settings = AppState.SettingsService.Load();
+        var selectedSource = settings.FontFamily;
+        var count = ReloadFontItems(selectedSource);
+
+        if (!string.IsNullOrWhiteSpace(selectedSource) && FindByTag(FontComboBox, selectedSource) is null)
+        {
+            settings.FontFamily = null;
+            AppState.SettingsService.Save(settings);
+            MainWindow.Instance?.ApplyFontFamily(null);
+        }
+
+        AppState.ShowStatus(Loc.Tf("Settings_Font_Refreshed_Format", count), InfoBarSeverity.Success);
+    }
+
+    private void GlassEffectToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_syncing)
+        {
+            return;
+        }
+
+        var settings = AppState.SettingsService.Load();
+        settings.GlassEffectEnabled = GlassEffectToggle.IsOn;
+        settings.BackgroundOpacity = (int)Math.Round(BackgroundOpacitySlider.Value);
+        AppState.SettingsService.Save(settings);
+        BackgroundOpacitySlider.IsEnabled = settings.GlassEffectEnabled;
+        MainWindow.Instance?.ApplyGlassAppearance(
+            settings.GlassEffectEnabled,
+            settings.BackgroundOpacity);
+    }
+
+    private void BackgroundOpacitySlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
+    {
+        var opacity = (int)Math.Round(e.NewValue);
+        UpdateBackgroundOpacityText(opacity);
+        if (_syncing)
+        {
+            return;
+        }
+
+        var settings = AppState.SettingsService.Load();
+        settings.BackgroundOpacity = opacity;
+        AppState.SettingsService.Save(settings);
+        MainWindow.Instance?.ApplyGlassSurfaceOpacity(opacity);
+    }
+
+    private void UpdateBackgroundOpacityText(int opacity)
+    {
+        if (BackgroundOpacityText is not null)
+        {
+            BackgroundOpacityText.Text = $"{opacity}%";
+        }
     }
 
     private void UpdateProxyComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
