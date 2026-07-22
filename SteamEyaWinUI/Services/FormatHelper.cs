@@ -185,6 +185,13 @@ internal static class FormatHelper
             _ => "TextFillColorSecondaryBrush"
         };
 
+        // 主题设在窗口根元素上（MainWindow.ApplyTheme），Application.Resources 直查永远拿到启动时的
+        // 浅色变体，深色模式下状态文字会黑字压深底；故按根元素 ActualTheme 到合并字典的主题字典里取。
+        if (TryFindThemeBrush(resourceKey) is { } themedBrush)
+        {
+            return themedBrush;
+        }
+
         if (Application.Current.Resources.TryGetValue(resourceKey, out var resource) &&
             resource is Brush brush)
         {
@@ -192,5 +199,28 @@ internal static class FormatHelper
         }
 
         return new SolidColorBrush(Microsoft.UI.Colors.Gray);
+    }
+
+    /// <summary>按当前实际主题在 XamlControlsResources 的主题字典中查找画刷；找不到返回 null。</summary>
+    private static Brush? TryFindThemeBrush(string key)
+    {
+        var dark = App.ActualTheme == ElementTheme.Dark;
+        foreach (var merged in Application.Current.Resources.MergedDictionaries)
+        {
+            // WinUI 的主题字典键为 Default(=Light)/Light/Dark，浅色两个键都试一下。
+            var themeKeys = dark ? new[] { "Dark" } : new[] { "Light", "Default" };
+            foreach (var themeKey in themeKeys)
+            {
+                if (merged.ThemeDictionaries.TryGetValue(themeKey, out var dictObj) &&
+                    dictObj is ResourceDictionary themeDict &&
+                    themeDict.TryGetValue(key, out var value) &&
+                    value is Brush brush)
+                {
+                    return brush;
+                }
+            }
+        }
+
+        return null;
     }
 }

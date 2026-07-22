@@ -751,7 +751,7 @@ public sealed partial class LoginPage : Page, INotifyPropertyChanged
         // 且下方 ApplyStoredAccountInfoProfile 会用无资料记录把面板上闪现的正确昵称头像抹回去。
         var prefetchedProfile = await UpdateAccountProfileAsync(accountName, eyaToken);
         AccountInfoAvailabilityText.Text = Loc.T("Login_Availability_VerifyingAndQuerying");
-        AccountInfoAvailabilityText.Foreground = FormatHelper.GetStatusBrush(InfoBarSeverity.Informational);
+        ResetAvailabilityForeground();
         AccountInfoPremierScoreText.Text = Loc.T("Login_Value_Querying");
         AccountInfoCsLevelText.Text = Loc.T("Login_Value_Querying");
         AccountInfoCooldownStatusText.Text = Loc.T("Login_Value_Querying");
@@ -774,7 +774,7 @@ public sealed partial class LoginPage : Page, INotifyPropertyChanged
         catch
         {
             AccountInfoAvailabilityText.Text = Loc.T("Login_Availability_NotVerified");
-            AccountInfoAvailabilityText.Foreground = FormatHelper.GetStatusBrush(InfoBarSeverity.Informational);
+            ResetAvailabilityForeground();
             throw;
         }
 
@@ -1020,6 +1020,13 @@ public sealed partial class LoginPage : Page, INotifyPropertyChanged
             FormatHelper.NormalizeToken(EyaTokenBox.Text.Trim()));
     }
 
+    /// <summary>
+    /// 可用状态恢复默认前景色：未验证/验证中等占位与「未填写/未解析」等字段保持同色，
+    /// 仅验证结果（有效/无效）才用成功/失败色。
+    /// </summary>
+    private void ResetAvailabilityForeground() =>
+        AccountInfoAvailabilityText.ClearValue(TextBlock.ForegroundProperty);
+
     private void UpdateAccountInfo(string? userName, string? token)
     {
         AccountInfoUserText.Text = string.IsNullOrWhiteSpace(userName) ? Loc.T("Login_Value_NotFilled") : userName;
@@ -1033,7 +1040,7 @@ public sealed partial class LoginPage : Page, INotifyPropertyChanged
             AccountInfoSteamIdText.Text = Loc.T("Login_Value_NotResolved");
             AccountInfoExpiresText.Text = Loc.T("Login_Value_NotResolved");
             AccountInfoAvailabilityText.Text = Loc.T("Login_Availability_NotVerified");
-            AccountInfoAvailabilityText.Foreground = FormatHelper.GetStatusBrush(InfoBarSeverity.Informational);
+            ResetAvailabilityForeground();
             return;
         }
 
@@ -1044,7 +1051,7 @@ public sealed partial class LoginPage : Page, INotifyPropertyChanged
             ? info.ExpiresAt.Value.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss")
             : Loc.T("Login_Value_NotResolved");
         AccountInfoAvailabilityText.Text = Loc.T("Login_Availability_NotVerified");
-        AccountInfoAvailabilityText.Foreground = FormatHelper.GetStatusBrush(InfoBarSeverity.Informational);
+        ResetAvailabilityForeground();
 
         if (!string.IsNullOrWhiteSpace(info.SteamId))
         {
@@ -1058,7 +1065,7 @@ public sealed partial class LoginPage : Page, INotifyPropertyChanged
         CancellationToken cancellationToken = default)
     {
         AccountInfoAvailabilityText.Text = Loc.T("Login_Availability_Verifying");
-        AccountInfoAvailabilityText.Foreground = FormatHelper.GetStatusBrush(InfoBarSeverity.Informational);
+        ResetAvailabilityForeground();
 
         SteamTokenOnlineValidationResult online;
         try
@@ -1076,7 +1083,7 @@ public sealed partial class LoginPage : Page, INotifyPropertyChanged
         {
             AppLog.Warn($"在线验证令牌时无法连接 Steam，已跳过在线验证继续{Loc.T(actionName)}：{ex.Message}");
             AccountInfoAvailabilityText.Text = Loc.T("Login_Availability_NotVerifiedOffline");
-            AccountInfoAvailabilityText.Foreground = FormatHelper.GetStatusBrush(InfoBarSeverity.Warning);
+            ResetAvailabilityForeground();
             ShowStatus(Loc.Tf("Login_Status_SkippedOnlineValidation_Format", Loc.T(actionName)), InfoBarSeverity.Warning);
             return;
         }
@@ -1100,7 +1107,7 @@ public sealed partial class LoginPage : Page, INotifyPropertyChanged
         CancellationToken cancellationToken = default)
     {
         AccountInfoAvailabilityText.Text = Loc.T("Login_Availability_Verifying");
-        AccountInfoAvailabilityText.Foreground = FormatHelper.GetStatusBrush(InfoBarSeverity.Informational);
+        ResetAvailabilityForeground();
 
         try
         {

@@ -8,6 +8,15 @@ public partial class App : Application
 {
     private Window? _window;
 
+    /// <summary>
+    /// 界面当前实际主题。主题设在窗口根元素上（见 MainWindow.ApplyTheme），
+    /// Application.RequestedTheme 始终是启动值，故需从根元素 ActualTheme 读取。
+    /// </summary>
+    internal static ElementTheme ActualTheme =>
+        Current is App app && app._window?.Content is FrameworkElement root
+            ? root.ActualTheme
+            : ElementTheme.Default;
+
     public App()
     {
         InitializeComponent();
