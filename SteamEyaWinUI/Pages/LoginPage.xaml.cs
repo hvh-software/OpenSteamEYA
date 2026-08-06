@@ -755,6 +755,7 @@ public sealed partial class LoginPage : Page, INotifyPropertyChanged
         AccountInfoPremierScoreText.Text = Loc.T("Login_Value_Querying");
         AccountInfoCsLevelText.Text = Loc.T("Login_Value_Querying");
         AccountInfoCooldownStatusText.Text = Loc.T("Login_Value_Querying");
+        AccountInfoCs2IsChinaText.Text = Loc.T("Login_Value_Querying");
 
         CsPremierScoreResult score;
         SteamTokenOnlineValidationResult online;
@@ -793,6 +794,13 @@ public sealed partial class LoginPage : Page, INotifyPropertyChanged
         AccountInfoPremierScoreText.Text = score.DisplayText;
         AccountInfoCsLevelText.Text = score.PlayerLevelText;
         AccountInfoCooldownStatusText.Text = score.CooldownStatusText;
+        AccountInfoCs2IsChinaText.Text = score.Cs2IsChinaText;
+        AccountInfoCs2IsChinaText.Foreground = FormatHelper.GetStatusBrush(score.Cs2IsChina switch
+        {
+            true => InfoBarSeverity.Success,
+            false => InfoBarSeverity.Error,
+            _ => InfoBarSeverity.Informational
+        });
         ApplyStoredAccountInfoProfile(steamId);
         return score;
     }
@@ -953,6 +961,7 @@ public sealed partial class LoginPage : Page, INotifyPropertyChanged
             AccountInfoPremierScoreText.Text = Loc.T("Login_Value_NotQueried");
             AccountInfoCsLevelText.Text = Loc.T("Login_Value_NotQueried");
             AccountInfoCooldownStatusText.Text = Loc.T("Login_Value_NotQueried");
+            AccountInfoCs2IsChinaText.Text = Loc.T("Login_Value_NotQueried");
             return;
         }
 
@@ -962,6 +971,7 @@ public sealed partial class LoginPage : Page, INotifyPropertyChanged
         AccountInfoPremierScoreText.Text = account.CompetitiveScoreText;
         AccountInfoCsLevelText.Text = account.CsPlayerLevelText;
         AccountInfoCooldownStatusText.Text = account.CooldownStatusText;
+        AccountInfoCs2IsChinaText.Text = account.Cs2IsChinaText;
     }
 
     // actionName 是稳定的本地化键（Login_Action_*），不是显示文案：既用于和具体动作比较，

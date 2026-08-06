@@ -274,6 +274,7 @@ internal sealed class AccountHistoryService
             item.GcVacBanned = score.GcVacBannedOrUnknown;
             item.CsPlayerLevel = score.PlayerLevel;
             item.InCsMatch = score.InMatch;
+            item.Cs2IsChina = score.Cs2IsChina;
             item.CsStatusUpdatedAt = DateTimeOffset.Now;
 
             if (!string.IsNullOrWhiteSpace(personaName))

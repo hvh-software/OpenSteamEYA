@@ -452,7 +452,8 @@
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
-                            </Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="100" />
                                 <ColumnDefinition Width="*" />
@@ -510,6 +511,14 @@
                             <TextBlock
                                 x:Name="HistoryDetailAccountStatusText"
                                 Grid.Row="6"
+                                Grid.Column="1"
+                                Text="{x:Bind Strings.Get('History_Detail_Pending'), Mode=OneWay}"
+                                Style="{StaticResource FieldValueTextStyle}" />
+
+                            <TextBlock Grid.Row="7" Text="{x:Bind Strings.Get('History_Detail_Label_Cs2IsChina'), Mode=OneWay}" Style="{StaticResource FieldLabelTextStyle}" />
+                            <TextBlock
+                                x:Name="HistoryDetailCs2IsChinaText"
+                                Grid.Row="7"
                                 Grid.Column="1"
                                 Text="{x:Bind Strings.Get('History_Detail_Pending'), Mode=OneWay}"
                                 Style="{StaticResource FieldValueTextStyle}" />
