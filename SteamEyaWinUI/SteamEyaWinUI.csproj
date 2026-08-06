@@ -41,6 +41,8 @@
   <ItemGroup>
     <Content Include="Assets\AppIcon.ico" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets\Logo.png" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\Fonts\*.ttf" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\Fonts\*.otf" CopyToOutputDirectory="PreserveNewest" />
     <!-- CS2 武器矢量图标（取自 Juknum/counter-strike-icons，CS2 游戏内 panorama 图标）。 -->
     <Content Include="Assets\weapons\*.svg" CopyToOutputDirectory="PreserveNewest" />
     <!-- Steamworks SDK 再分发库：供「CS2 设置同步」用 ISteamRemoteStorage 强推 cfg 到 Steam 云。

@@ -7,96 +7,168 @@
     NavigationCacheMode="Required">
 
     <Page.Resources>
-        <!-- 可选武器（未装备）：小条，可拖拽到上方格子。
-             拖拽走页面自实现的指针拖拽（非系统 OLE），提权运行时依然可用。 -->
-        <DataTemplate x:Key="PoolTileTemplate" x:DataType="models:LoadoutWeaponTile">
-            <Grid
-                Width="150"
-                Height="32"
-                Margin="0,0,6,6"
-                Background="Transparent"
-                PointerPressed="PoolItem_PointerPressed"
-                PointerMoved="DragSource_PointerMoved"
-                PointerReleased="DragSource_PointerReleased"
-                PointerCaptureLost="DragSource_PointerCaptureLost"
-                PointerCanceled="DragSource_PointerCanceled">
-                <Border CornerRadius="4" Background="#FF202B3A" BorderThickness="1" BorderBrush="#FF3A4658" />
-                <StackPanel Orientation="Horizontal" Spacing="6" Padding="6,0" VerticalAlignment="Center">
-                    <Image Width="42" Height="18" Stretch="Uniform">
-                        <Image.Source>
-                            <imaging:SvgImageSource UriSource="{x:Bind IconUri}" />
-                        </Image.Source>
-                    </Image>
-                    <TextBlock Text="{x:Bind DisplayName}" FontSize="11" Foreground="#FFCDCDCD" VerticalAlignment="Center" />
-                </StackPanel>
-            </Grid>
-        </DataTemplate>
+        <ResourceDictionary>
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Default">
+                    <SolidColorBrush x:Key="LoadoutSectionBrush" Color="#78202020" />
+                    <SolidColorBrush x:Key="LoadoutStrokeBrush" Color="#42FFFFFF" />
+                    <SolidColorBrush x:Key="LoadoutWeaponCardBackgroundBrush" Color="#1A000000" />
+                    <SolidColorBrush x:Key="LoadoutWeaponCardTextBrush" Color="#FFFFFFFF" />
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Light">
+                    <SolidColorBrush x:Key="LoadoutSectionBrush" Color="#8AFFFFFF" />
+                    <SolidColorBrush x:Key="LoadoutStrokeBrush" Color="#36FFFFFF" />
+                    <SolidColorBrush x:Key="LoadoutWeaponCardBackgroundBrush" Color="#80000000" />
+                    <SolidColorBrush x:Key="LoadoutWeaponCardTextBrush" Color="#FFFFFFFF" />
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+            <SolidColorBrush x:Key="LoadoutWeaponCardBorderBrush" Color="#4D000000" />
+            <Style x:Key="LoadoutCellBorderStyle" TargetType="Border">
+                <Setter Property="Background" Value="{ThemeResource LoadoutWeaponCardBackgroundBrush}" />
+                <Setter Property="BorderBrush" Value="{StaticResource LoadoutWeaponCardBorderBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="CornerRadius" Value="8" />
+            </Style>
+            <Style x:Key="LoadoutSectionHeaderStyle" TargetType="TextBlock">
+                <Setter Property="Foreground" Value="{ThemeResource TextFillColorPrimaryBrush}" />
+                <Setter Property="FontSize" Value="13" />
+                <Setter Property="FontWeight" Value="SemiBold" />
+            </Style>
+            <Style x:Key="LoadoutEmptySlotStyle" TargetType="TextBlock">
+                <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
+                <Setter Property="FontSize" Value="22" />
+                <Setter Property="FontWeight" Value="SemiBold" />
+            </Style>
+            <Style x:Key="LoadoutWeaponNameStyle" TargetType="TextBlock">
+                <Setter Property="Foreground" Value="{ThemeResource LoadoutWeaponCardTextBrush}" />
+                <Setter Property="FontWeight" Value="SemiBold" />
+            </Style>
+
+            <!-- 可选武器（未装备）：图文比例约 45:55，可拖拽到上方格子。 -->
+            <DataTemplate x:Key="PoolTileTemplate" x:DataType="models:LoadoutWeaponTile">
+                <Border
+                    Height="72"
+                    Tag="{x:Bind}"
+                    CornerRadius="8"
+                    Background="{ThemeResource LoadoutWeaponCardBackgroundBrush}"
+                    BorderBrush="{StaticResource LoadoutWeaponCardBorderBrush}"
+                    BorderThickness="1"
+                    PointerPressed="PoolItem_PointerPressed"
+                    PointerMoved="DragSource_PointerMoved"
+                    PointerReleased="DragSource_PointerReleased"
+                    PointerCaptureLost="DragSource_PointerCaptureLost"
+                    PointerCanceled="DragSource_PointerCanceled">
+                    <Grid Padding="12,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="9*" />
+                            <ColumnDefinition Width="11*" />
+                        </Grid.ColumnDefinitions>
+
+                        <Image
+                            Grid.Column="0"
+                            Height="36"
+                            MaxWidth="80"
+                            Stretch="Uniform"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center">
+                            <Image.Source>
+                                <imaging:SvgImageSource UriSource="{x:Bind IconUri}" />
+                            </Image.Source>
+                        </Image>
+
+                        <Grid Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center">
+                            <TextBlock
+                                Text="{x:Bind DisplayName}"
+                                FontSize="13"
+                                FontWeight="SemiBold"
+                                Foreground="{ThemeResource LoadoutWeaponCardTextBrush}"
+                                MaxLines="1"
+                                VerticalAlignment="Center"
+                                TextTrimming="CharacterEllipsis" />
+                        </Grid>
+                    </Grid>
+                </Border>
+            </DataTemplate>
+        </ResourceDictionary>
     </Page.Resources>
 
-    <Grid x:Name="PageRoot" Padding="32,24,32,16" RowSpacing="12">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-        </Grid.RowDefinitions>
-
-        <StackPanel Grid.Row="0" Spacing="4">
-            <TextBlock Text="{x:Bind Strings.Get('Loadout_Title'), Mode=OneWay}" Style="{StaticResource PageTitleTextStyle}" />
-            <TextBlock
-                Text="{x:Bind Strings.Get('Loadout_Subtitle'), Mode=OneWay}"
-                Style="{StaticResource PageSubtitleTextStyle}" />
-        </StackPanel>
-
-        <SelectorBar Grid.Row="1" x:Name="TeamSelector" SelectionChanged="TeamSelector_SelectionChanged">
-            <SelectorBarItem x:Name="TeamTItem" Text="{x:Bind Strings.Get('Loadout_Team_T'), Mode=OneWay}" IsSelected="True" />
-            <SelectorBarItem x:Name="TeamCtItem" Text="{x:Bind Strings.Get('Loadout_Team_Ct'), Mode=OneWay}" />
-        </SelectorBar>
-
-        <!-- 深色「装备面板」：武器格子沿用 CS2 深色风格，包进统一深色板中，
-             浅色主题下不再是孤立的深色块；格子/池内配色固定，与主题无关。 -->
-        <Border
-            Grid.Row="2"
-            CornerRadius="8"
-            Padding="16"
-            Background="#FF1B2331"
-            BorderThickness="1"
-            BorderBrush="#FF32405A">
-            <Grid RowSpacing="10">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="*" />
-                    <RowDefinition Height="Auto" />
-                </Grid.RowDefinitions>
-
-                <!-- 装备区：三列等高，格子按星形行拉伸填满 → 各列最后一行底部对齐（复刻 CS2）。代码里填充格子。 -->
-                <Grid Grid.Row="0" x:Name="EquippedGrid" ColumnSpacing="14">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <Grid x:Name="Col0Host" Grid.Column="0" VerticalAlignment="Stretch" />
-                    <Grid x:Name="Col1Host" Grid.Column="1" VerticalAlignment="Stretch" />
-                    <Grid x:Name="Col2Host" Grid.Column="2" VerticalAlignment="Stretch" />
+    <Grid x:Name="PageRoot" Background="Transparent">
+        <ScrollViewer
+            HorizontalScrollBarVisibility="Disabled"
+            VerticalScrollBarVisibility="Auto"
+            VerticalScrollMode="Auto">
+            <StackPanel Padding="24,20,24,24" Spacing="16">
+                <Grid ColumnSpacing="16" Margin="4,0,4,2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock
+                            Grid.Column="0"
+                            Text="{x:Bind Strings.Get('Loadout_Title'), Mode=OneWay}"
+                            Style="{StaticResource PageTitleTextStyle}"
+                            VerticalAlignment="Center" />
+                        <SelectorBar
+                            x:Name="TeamSelector"
+                            Grid.Column="1"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Center"
+                            SelectionChanged="TeamSelector_SelectionChanged">
+                            <SelectorBarItem
+                                x:Name="TeamTItem"
+                                Text="{x:Bind Strings.Get('Loadout_Team_T'), Mode=OneWay}"
+                                IsSelected="True" />
+                            <SelectorBarItem
+                                x:Name="TeamCtItem"
+                                Text="{x:Bind Strings.Get('Loadout_Team_Ct'), Mode=OneWay}" />
+                        </SelectorBar>
                 </Grid>
 
-                <!-- 可选武器池（未装备的，按阵营）。 -->
-                <StackPanel Grid.Row="1" Spacing="6">
-                    <TextBlock Text="{x:Bind Strings.Get('Loadout_PoolHint'), Mode=OneWay}" FontSize="12" Foreground="#FFAAB4C4" />
-                    <GridView
-                        x:Name="PoolGrid"
-                        MaxHeight="160"
-                        SelectionMode="None"
-                        IsItemClickEnabled="False"
-                        ItemTemplate="{StaticResource PoolTileTemplate}" />
+                <StackPanel Spacing="14">
+                        <Border CornerRadius="10" Padding="14" Background="{ThemeResource LoadoutSectionBrush}">
+                            <Grid
+                                x:Name="EquippedGrid"
+                                ColumnSpacing="10"
+                                HorizontalAlignment="Stretch">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid x:Name="Col0Host" Grid.Column="0" MinWidth="0" VerticalAlignment="Stretch" />
+                                <Grid x:Name="Col1Host" Grid.Column="1" MinWidth="0" VerticalAlignment="Stretch" />
+                                <Grid x:Name="Col2Host" Grid.Column="2" MinWidth="0" VerticalAlignment="Stretch" />
+                            </Grid>
+                        </Border>
+
+                        <Border CornerRadius="10" Padding="12" Background="{ThemeResource LoadoutSectionBrush}">
+                            <StackPanel Spacing="8">
+                                <TextBlock
+                                    Text="{x:Bind Strings.Get('Loadout_PoolHint'), Mode=OneWay}"
+                                    FontSize="12"
+                                    FontWeight="SemiBold"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    TextWrapping="Wrap" />
+                                <ItemsRepeater
+                                    x:Name="PoolGrid"
+                                    HorizontalAlignment="Stretch"
+                                    ItemTemplate="{StaticResource PoolTileTemplate}">
+                                    <ItemsRepeater.Layout>
+                                        <UniformGridLayout
+                                            Orientation="Horizontal"
+                                            MaximumRowsOrColumns="3"
+                                            MinColumnSpacing="10"
+                                            MinRowSpacing="12"
+                                            ItemsStretch="Fill" />
+                                    </ItemsRepeater.Layout>
+                                </ItemsRepeater>
+                            </StackPanel>
+                        </Border>
                 </StackPanel>
-            </Grid>
-        </Border>
+            </StackPanel>
+        </ScrollViewer>
 
         <!-- 拖拽 ghost 图层：跟随指针的武器缩略，不参与命中检测。 -->
-        <Canvas
-            x:Name="DragLayer"
-            Grid.Row="0"
-            Grid.RowSpan="3"
-            IsHitTestVisible="False" />
+        <Canvas x:Name="DragLayer" IsHitTestVisible="False" />
     </Grid>
 </Page>
