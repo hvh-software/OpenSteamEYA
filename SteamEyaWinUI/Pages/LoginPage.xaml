@@ -263,6 +263,7 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="88" />
@@ -315,6 +316,13 @@
                         <TextBlock
                             x:Name="AccountInfoCooldownStatusText"
                             Grid.Row="6"
+                            Grid.Column="1"
+                            Style="{StaticResource FieldValueTextStyle}" />
+
+                        <TextBlock Grid.Row="7" Text="{x:Bind Strings.Get('Login_Label_Cs2IsChina'), Mode=OneWay}" Style="{StaticResource FieldLabelTextStyle}" />
+                        <TextBlock
+                            x:Name="AccountInfoCs2IsChinaText"
+                            Grid.Row="7"
                             Grid.Column="1"
                             Style="{StaticResource FieldValueTextStyle}" />
                     </Grid>

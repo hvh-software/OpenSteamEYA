@@ -83,6 +83,8 @@ public sealed partial class SteamAccountHistoryItem : INotifyPropertyChanged
 
     public bool? InCsMatch { get; set; }
 
+    public bool? Cs2IsChina { get; set; }
+
     public DateTimeOffset? CsStatusUpdatedAt { get; set; }
 
     private string? _note;
@@ -224,6 +226,14 @@ public sealed partial class SteamAccountHistoryItem : INotifyPropertyChanged
     public string InCsMatchText => InCsMatch.HasValue
         ? (InCsMatch.Value ? Loc.T("Account_InMatch_Maybe") : Loc.T("Account_InMatch_None"))
         : Loc.T("Account_Pending");
+
+    [JsonIgnore]
+    public string Cs2IsChinaText => Cs2IsChina switch
+    {
+        true => Loc.T("Cs2_IsChina_Yes"),
+        false => Loc.T("Cs2_IsChina_No"),
+        _ => Loc.T("Account_Pending")
+    };
 
     [JsonIgnore]
     public string AccountStatusText

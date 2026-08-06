@@ -14,7 +14,8 @@ public sealed record CsPremierScoreResult(
     uint? PenaltyReason,
     int? VacBanned,
     int? PlayerLevel,
-    bool InMatch)
+    bool InMatch,
+    bool? Cs2IsChina)
 {
     public bool HasPremierScore => PremierRanking is not null && PremierRanking.RankId > 0;
 
@@ -40,6 +41,13 @@ public sealed record CsPremierScoreResult(
         FormatHelper.FormatCooldownStatusText(PenaltySeconds, PenaltyReason, VacBanned, Loc.T("Cs_Unknown_GcNoResponse"), Loc.T("Cs_Unknown"));
 
     public string PlayerLevelText => FormatHelper.FormatPlayerLevelText(PlayerLevel, Loc.T("Cs_PlayerLevel_NotRead"));
+
+    public string Cs2IsChinaText => Cs2IsChina switch
+    {
+        true => Loc.T("Cs2_IsChina_Yes"),
+        false => Loc.T("Cs2_IsChina_No"),
+        _ => Loc.T("Cs_Unknown")
+    };
 
     public string StatusText
     {

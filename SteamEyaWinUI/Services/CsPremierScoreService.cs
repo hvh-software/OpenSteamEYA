@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net;
 using SteamEyaWinUI.Localization;
 using SteamEyaWinUI.Models;
 
@@ -25,6 +26,16 @@ internal sealed class CsPremierScoreService
         Timeout = TimeSpan.FromSeconds(30)
     };
 
+    private static readonly HttpClient LicensesHttpClient = new(new HttpClientHandler
+    {
+        AutomaticDecompression = DecompressionMethods.All,
+        UseCookies = false,
+        AllowAutoRedirect = false
+    })
+    {
+        Timeout = TimeSpan.FromSeconds(30)
+    };
+
     public async Task<CsPremierScoreResult> QueryAsync(
         string refreshToken,
         string steamId,
@@ -42,6 +53,10 @@ internal sealed class CsPremierScoreService
         try
         {
             var helloTask = WaitForMatchmakingHelloAsync(cmClient, cancellationToken);
+
+            var webSession = await SteamWebSession.BuildAsync(cmClient, refreshToken, steamId, cancellationToken);
+            var cs2IsChinaTask = CheckCs2IsChinaAsync(webSession, cancellationToken);
+
             await cmClient.SetGamesPlayedAsync([CsGcSession.Cs2AppId], cancellationToken);
             await CsGcSession.ConnectAsync(cmClient, cancellationToken);
 
@@ -111,6 +126,8 @@ internal sealed class CsPremierScoreService
             var premier = profile.Rankings.FirstOrDefault(ranking =>
                 ranking.RankTypeId == PremierRankTypeId);
 
+            var cs2IsChina = await cs2IsChinaTask;
+
             return new CsPremierScoreResult(
                 steamId,
                 accountId,
@@ -120,7 +137,8 @@ internal sealed class CsPremierScoreService
                 helloData?.PenaltyReason,
                 helloData?.VacBanned,
                 profile.PlayerLevel,
-                profile.InMatch);
+                profile.InMatch,
+                cs2IsChina);
         }
         finally
         {
@@ -160,6 +178,55 @@ internal sealed class CsPremierScoreService
             return DecodeAccountProfile(message.Payload);
         }
         catch (TimeoutException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 判定该账号的 CS:GO 授权是否含国服（Steam China PW Grant）：查询账号授权页
+    /// （store.steampowered.com/account/licenses）并检查“Steam China PW Grant”授权条目。
+    /// 返回 null 表示未能判定。
+    /// </summary>
+    private static async Task<bool?> CheckCs2IsChinaAsync(
+        SteamWebSession session,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(
+                HttpMethod.Get,
+                "https://store.steampowered.com/account/licenses/?l=schinese");
+            request.Headers.Add("Cookie", session.CookieHeader);
+            request.Headers.Add("User-Agent", "Mozilla/5.0");
+
+            using var response = await LicensesHttpClient.SendAsync(request, cancellationToken);
+
+            // 3xx：会话不被接受时会被导向登录页等；不跟随，按未知处理。
+            if (response.StatusCode is >= HttpStatusCode.Ambiguous and < HttpStatusCode.BadRequest)
+            {
+                return null;
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            var html = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (string.IsNullOrWhiteSpace(html) ||
+                html.Contains("<TITLE>Access Denied</TITLE>", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            return html.Contains("Steam China PW Grant", StringComparison.Ordinal);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
         {
             return null;
         }

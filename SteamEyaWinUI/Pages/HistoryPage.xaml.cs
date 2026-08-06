@@ -1085,6 +1085,7 @@ public sealed partial class HistoryPage : Page, INotifyPropertyChanged
             HistoryDetailCsLevelText.Text = Loc.T("History_Detail_Pending");
             HistoryDetailCooldownStatusText.Text = Loc.T("History_Detail_Pending");
             HistoryDetailAccountStatusText.Text = Loc.T("History_Detail_Pending");
+            HistoryDetailCs2IsChinaText.Text = Loc.T("History_Detail_Pending");
             HistoryDetailNoteBox.Text = string.Empty;
             _noteAccount = null;
             return;
@@ -1101,6 +1102,7 @@ public sealed partial class HistoryPage : Page, INotifyPropertyChanged
         HistoryDetailCsLevelText.Text = account.CsPlayerLevelText;
         HistoryDetailCooldownStatusText.Text = account.RemainingCooldownStatusText;
         HistoryDetailAccountStatusText.Text = account.JwtAvailabilityText;
+        HistoryDetailCs2IsChinaText.Text = account.Cs2IsChinaText;
 
         // 仍是同一账号且备注框正被编辑时，保留用户正在输入的文本（已在上面 flush 落盘），不用旧快照回填冲掉。
         var sameAccountBeingEdited = noteBoxHadFocus && editingKey is not null &&
