@@ -259,6 +259,9 @@ public sealed partial class HistoryPage : Page, INotifyPropertyChanged
     // 「刷新」按钮的网络资料同步是否进行中（防连点叠加多轮抓取；UI 线程独占访问，无需同步）。
     private bool _profileRefreshInFlight;
 
+    // 全量查询时把顶部查询按钮切换为同位置的取消按钮。
+    private bool _isQueryAllInFlight;
+
     private async void RefreshHistoryButton_Click(object sender, RoutedEventArgs e)
     {
         // 先秒级重读磁盘保持原有手感；随后后台重新抓取全部账号的昵称/头像——
@@ -318,12 +321,29 @@ public sealed partial class HistoryPage : Page, INotifyPropertyChanged
 
     private async void QueryAllHistoryButton_Click(object sender, RoutedEventArgs e)
     {
-        await QueryAccountsAsync(
-            AppState.HistoryAccounts.ToList(),
-            "History_Status_NoneToQueryAll",
-            "History_Status_QueryAllProgress_Format",
-            "History_Status_QueryAllDone_Format",
-            "History_Status_QueryAllCanceled_Format");
+        _isQueryAllInFlight = true;
+        UpdateControlsEnabled();
+        try
+        {
+            await QueryAccountsAsync(
+                AppState.HistoryAccounts.ToList(),
+                "History_Status_NoneToQueryAll",
+                "History_Status_QueryAllProgress_Format",
+                "History_Status_QueryAllDone_Format",
+                "History_Status_QueryAllCanceled_Format",
+                () => _isQueryAllInFlight = false);
+        }
+        finally
+        {
+            _isQueryAllInFlight = false;
+            UpdateControlsEnabled();
+        }
+    }
+
+    private void CancelAllHistoryButton_Click(object sender, RoutedEventArgs e)
+    {
+        AppState.ShowStatus(Loc.T("History_Status_Canceling"), InfoBarSeverity.Informational);
+        AppState.CancelBusyOperation();
     }
 
     private void ExportAccountsToClipboard(IReadOnlyList<SteamAccountHistoryItem> accounts)
@@ -1517,7 +1537,8 @@ public sealed partial class HistoryPage : Page, INotifyPropertyChanged
         string noneStatusKey,
         string progressStatusKey,
         string doneStatusKey,
-        string canceledStatusKey)
+        string canceledStatusKey,
+        Action? beforeEndBusy = null)
     {
         if (AppState.LoginPage is not { } loginPage)
         {
@@ -1576,6 +1597,7 @@ public sealed partial class HistoryPage : Page, INotifyPropertyChanged
         }
         finally
         {
+            beforeEndBusy?.Invoke();
             AppState.EndBusyOperation();
         }
     }
@@ -1949,13 +1971,16 @@ public sealed partial class HistoryPage : Page, INotifyPropertyChanged
         HistoryAccountList.IsEnabled = !isBusy && _viewItems.Count > 0;
         RefreshHistoryButton.IsEnabled = !isBusy;
         HistorySearchBox.IsEnabled = !isBusy;
-        QueryAllHistoryButton.IsEnabled = !isBusy && AppState.HistoryAccounts.Count > 0;
         ImportHistoryButton.IsEnabled = !isBusy;
         BatchImportWhiteButton.IsEnabled = !isBusy;
         ClearHistoryButton.IsEnabled = !isBusy && AppState.HistoryAccounts.Count > 0;
         ClearInvalidAccountsButton.IsEnabled = !isBusy && AppState.HistoryAccounts.Count > 0;
         OneClickHistoryQueryButton.IsEnabled = !isBusy && hasActive;
         UseHistoryAccountButton.IsEnabled = !isBusy && hasActive;
+        QueryAllHistoryButton.Visibility = _isQueryAllInFlight ? Visibility.Collapsed : Visibility.Visible;
+        QueryAllHistoryButton.IsEnabled = !isBusy && AppState.HistoryAccounts.Count > 0;
+        CancelAllHistoryButton.Visibility = _isQueryAllInFlight ? Visibility.Visible : Visibility.Collapsed;
+        CancelAllHistoryButton.IsEnabled = _isQueryAllInFlight;
         BatchClearButton.IsEnabled = !isBusy;
         BatchQueryButton.IsEnabled = !isBusy;
         BatchGroupButton.IsEnabled = !isBusy;
@@ -1965,6 +1990,8 @@ public sealed partial class HistoryPage : Page, INotifyPropertyChanged
         ManageGroupsButton.IsEnabled = !isBusy;
 
         // 取消按钮仅忙碌时出现且保持可用，让用户中断本页发起的一键查询。
-        CancelHistoryQueryButton.Visibility = isBusy ? Visibility.Visible : Visibility.Collapsed;
+        CancelHistoryQueryButton.Visibility = isBusy && !_isQueryAllInFlight
+            ? Visibility.Visible
+            : Visibility.Collapsed;
     }
 }
