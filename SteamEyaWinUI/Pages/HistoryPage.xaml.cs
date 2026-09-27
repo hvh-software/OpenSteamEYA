@@ -316,6 +316,16 @@ public sealed partial class HistoryPage : Page, INotifyPropertyChanged
         UpdateControlsEnabled();
     }
 
+    private async void QueryAllHistoryButton_Click(object sender, RoutedEventArgs e)
+    {
+        await QueryAccountsAsync(
+            AppState.HistoryAccounts.ToList(),
+            "History_Status_NoneToQueryAll",
+            "History_Status_QueryAllProgress_Format",
+            "History_Status_QueryAllDone_Format",
+            "History_Status_QueryAllCanceled_Format");
+    }
+
     private void ExportAccountsToClipboard(IReadOnlyList<SteamAccountHistoryItem> accounts)
     {
         if (accounts.Count == 0)
@@ -1490,9 +1500,24 @@ public sealed partial class HistoryPage : Page, INotifyPropertyChanged
         return result == ContentDialogResult.Primary ? codeBox.Text.Trim() : null;
     }
 
-    // ---------- 批量一键查询（对所有已勾选账号依次查询，复用全局忙碌+取消机制） ----------
+    // ---------- 批量一键查询（对所有已勾选账号依次查询，复用全局忙碌+取消机制 + search all） ----------
 
     private async void BatchQueryButton_Click(object sender, RoutedEventArgs e)
+    {
+        await QueryAccountsAsync(
+            GetCheckedAccounts(),
+            "History_Status_NoneToQuery",
+            "History_Status_BatchQuerying_Format",
+            "History_Status_BatchQueryDone_Format",
+            "History_Status_BatchQueryCanceled_Format");
+    }
+
+    private async Task QueryAccountsAsync(
+        IReadOnlyList<SteamAccountHistoryItem> accounts,
+        string noneStatusKey,
+        string progressStatusKey,
+        string doneStatusKey,
+        string canceledStatusKey)
     {
         if (AppState.LoginPage is not { } loginPage)
         {
@@ -1500,10 +1525,9 @@ public sealed partial class HistoryPage : Page, INotifyPropertyChanged
             return;
         }
 
-        var accounts = GetCheckedAccounts();
         if (accounts.Count == 0)
         {
-            AppState.ShowStatus(Loc.T("History_Status_NoneToQuery"), InfoBarSeverity.Error);
+            AppState.ShowStatus(Loc.T(noneStatusKey), InfoBarSeverity.Error);
             return;
         }
 
@@ -1524,7 +1548,7 @@ public sealed partial class HistoryPage : Page, INotifyPropertyChanged
 
                 var account = accounts[i];
                 AppState.ShowStatus(
-                    Loc.Tf("History_Status_BatchQuerying_Format", i + 1, accounts.Count, account.AccountTitle),
+                    Loc.Tf(progressStatusKey, i + 1, accounts.Count, account.AccountTitle),
                     InfoBarSeverity.Informational);
 
                 try
@@ -1546,8 +1570,8 @@ public sealed partial class HistoryPage : Page, INotifyPropertyChanged
 
             AppState.ShowStatus(
                 canceled
-                    ? Loc.Tf("History_Status_BatchQueryCanceled_Format", succeeded, failed)
-                    : Loc.Tf("History_Status_BatchQueryDone_Format", succeeded, failed),
+                    ? Loc.Tf(canceledStatusKey, succeeded, failed)
+                    : Loc.Tf(doneStatusKey, succeeded, failed),
                 canceled ? InfoBarSeverity.Informational : InfoBarSeverity.Success);
         }
         finally
@@ -1925,6 +1949,7 @@ public sealed partial class HistoryPage : Page, INotifyPropertyChanged
         HistoryAccountList.IsEnabled = !isBusy && _viewItems.Count > 0;
         RefreshHistoryButton.IsEnabled = !isBusy;
         HistorySearchBox.IsEnabled = !isBusy;
+        QueryAllHistoryButton.IsEnabled = !isBusy && AppState.HistoryAccounts.Count > 0;
         ImportHistoryButton.IsEnabled = !isBusy;
         BatchImportWhiteButton.IsEnabled = !isBusy;
         ClearHistoryButton.IsEnabled = !isBusy && AppState.HistoryAccounts.Count > 0;
