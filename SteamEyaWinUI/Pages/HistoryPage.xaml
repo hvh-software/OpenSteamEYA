@@ -17,6 +17,7 @@
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
 
             <StackPanel Spacing="4">
@@ -37,8 +38,20 @@
                 TextChanged="HistorySearchBox_TextChanged" />
 
             <Button
-                x:Name="RefreshHistoryButton"
+                x:Name="QueryAllHistoryButton"
                 Grid.Column="2"
+                VerticalAlignment="Center"
+                Click="QueryAllHistoryButton_Click"
+                ToolTipService.ToolTip="{x:Bind Strings.Get('History_QueryAll_Tooltip'), Mode=OneWay}">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <FontIcon Glyph="&#xE9D9;" FontSize="16" />
+                    <TextBlock Text="{x:Bind Strings.Get('History_QueryAll_Button'), Mode=OneWay}" />
+                </StackPanel>
+            </Button>
+
+            <Button
+                x:Name="RefreshHistoryButton"
+                Grid.Column="3"
                 VerticalAlignment="Center"
                 Click="RefreshHistoryButton_Click">
                 <StackPanel Orientation="Horizontal" Spacing="8">
