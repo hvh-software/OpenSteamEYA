@@ -512,6 +512,7 @@
     "License_Error_InvalidKeyOrServer": "The license key is invalid or the wrong upstream server was selected.",
     "License_Error_WrongKeyOrServer": "The license key is incorrect or the wrong upstream server was selected.",
     "License_Error_ResponseTooShort": "The upstream server returned a response that is too short.",
+    "License_Error_UpstreamMessage_Format": "The upstream server responded: {0}. Check that the license key is correct and still valid, and that the right upstream server is selected.",
     "License_Error_NoAccountData": "The upstream JSON contains no account data.",
     "License_Error_MissingField_Format": "The upstream JSON is missing a field: {0}",
     "License_Error_EmptyField_Format": "The upstream JSON field is empty: {0}",

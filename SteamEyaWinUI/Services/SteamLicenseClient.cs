@@ -18,6 +18,7 @@ internal sealed class SteamLicenseClient
 {
     private const string KeyDataPath = "/keygetdata?key=";
     private const int HeaderSkipBytes = 8;
+    private const int MaxUpstreamMessageLength = 200;
 
     private static readonly HttpClient DefaultHttpClient = new()
     {
@@ -64,18 +65,39 @@ internal sealed class SteamLicenseClient
 
     private static string DecompressKeyDataResponse(byte[] raw)
     {
-        if (raw.Length <= HeaderSkipBytes)
+        if (raw.Length > HeaderSkipBytes + 2 && IsZlibHeader(raw[HeaderSkipBytes], raw[HeaderSkipBytes + 1]))
+        {
+            using var input = new MemoryStream(raw, HeaderSkipBytes, raw.Length - HeaderSkipBytes, writable: false);
+            using var zlib = new ZLibStream(input, CompressionMode.Decompress);
+            using var output = new MemoryStream();
+            zlib.CopyTo(output);
+
+            return Encoding.UTF8.GetString(output.ToArray());
+        }
+
+        // 卡密无效/已用/选错服务器时，上游仍回 HTTP 200，正文是纯文本错误（如路飞「卡密无效」、奶味「获取失败」）。
+        // 跳过 8 字节后按 zlib 解会抛「unsupported compression method」，把真正原因藏起来。
+        var text = Encoding.UTF8.GetString(raw).Trim();
+        if (text.Length == 0)
         {
             throw new InvalidDataException(Loc.T("License_Error_ResponseTooShort"));
         }
 
-        using var input = new MemoryStream(raw, HeaderSkipBytes, raw.Length - HeaderSkipBytes, writable: false);
-        using var zlib = new ZLibStream(input, CompressionMode.Decompress);
-        using var output = new MemoryStream();
-        zlib.CopyTo(output);
+        if (text[0] is '{' or '[')
+        {
+            return text;
+        }
 
-        return Encoding.UTF8.GetString(output.ToArray());
+        if (text.Length > MaxUpstreamMessageLength)
+        {
+            text = text[..MaxUpstreamMessageLength] + "…";
+        }
+
+        throw new InvalidOperationException(Loc.Tf("License_Error_UpstreamMessage_Format", text));
     }
+
+    private static bool IsZlibHeader(byte cmf, byte flg) =>
+        (cmf & 0x0F) == 8 && ((cmf << 8) | flg) % 31 == 0;
 
     private static SteamAccountData ParseAccountJson(string json)
     {

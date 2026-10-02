@@ -510,6 +510,7 @@
     "License_Error_InvalidKeyOrServer": "卡密不合法或上游服务器选择有误。",
     "License_Error_WrongKeyOrServer": "卡密有误或上游服务器选择有误。",
     "License_Error_ResponseTooShort": "上游服务器返回内容过短。",
+    "License_Error_UpstreamMessage_Format": "上游服务器返回：{0}。请检查卡密是否正确、是否已失效，以及上游服务器是否选对。",
     "License_Error_NoAccountData": "上游 JSON 没有账号数据。",
     "License_Error_MissingField_Format": "上游 JSON 缺少字段：{0}",
     "License_Error_EmptyField_Format": "上游 JSON 字段为空：{0}",
