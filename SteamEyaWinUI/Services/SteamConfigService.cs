@@ -97,12 +97,16 @@ internal sealed class SteamConfigService
         // 写入 loginusers.vdf/local.vdf 的自动登录，停在登录界面。这正是「上号流程
         // 全部成功、Steam 进程也起来了，却没自动登录」且只在部分机器复现的根因
         // （取决于该机 config.vdf 里有没有我们解析器处理不好的内容）。参考二进制
-        // 干脆只写下面这三项最小模板，彻底规避往返破坏。
+        // 干脆只写下面的最小模板，彻底规避往返破坏。
         var config = new Dictionary<string, object>(StringComparer.Ordinal);
         var steam = EnsurePath(config, "InstallConfigStore", "Software", "Valve", "Steam");
 
         steam["AutoUpdateWindowEnabled"] = "0";
         steam["MTBF"] = Random.Shared.Next(100000000, 999999999).ToString();
+
+        // Steam「下载」页的着色器预缓存开关：每次换号重建配置时显式禁用，避免恢复为默认开启。
+        var shaderCacheManager = EnsureObject(steam, "ShaderCacheManager");
+        shaderCacheManager["DisableShaderCache"] = "1";
 
         var accounts = EnsureObject(steam, "Accounts");
         accounts[accountName] = new Dictionary<string, object>
