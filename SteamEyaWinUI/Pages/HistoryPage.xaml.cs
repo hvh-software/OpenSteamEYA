@@ -52,6 +52,10 @@ public sealed partial class HistoryPage : Page, INotifyPropertyChanged
     /// <summary>重建筛选下拉时抑制 SelectionChanged 回调，避免重入重建。</summary>
     private bool _suppressGroupFilterChange;
 
+    private HistoryAccountFilter _statusFilter = new();
+    private bool _historyFiltersReady;
+    private bool _suppressStatusFilterChange;
+
     /// <summary>页面是否处于活动（已导航到、未离开）状态，用于不可见时延迟重建。</summary>
     private bool _isActive;
 
@@ -98,6 +102,8 @@ public sealed partial class HistoryPage : Page, INotifyPropertyChanged
         AppState.PendingHistorySelection = null;
         _allItems = AppState.HistoryAccounts;
         LoadGroups();
+        RebuildStatusFilterCombos();
+        _historyFiltersReady = true;
         RebuildView(pending);
     }
 
@@ -114,6 +120,7 @@ public sealed partial class HistoryPage : Page, INotifyPropertyChanged
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Strings)));
             UpdateSummaryTexts();
             RebuildGroupFilterCombo();
+            RebuildStatusFilterCombos();
             UpdateBatchBar();
             UpdateDetail();
             UpdateControlsEnabled();
@@ -171,11 +178,12 @@ public sealed partial class HistoryPage : Page, INotifyPropertyChanged
 
     private void RebuildView(string? selectSteamId)
     {
-        // 过滤只在内存快照上做，不回读磁盘。先按分组筛选，再按搜索词过滤。
+        // 分组、状态和搜索按 AND 组合，只筛选内存快照，不回读磁盘。
         var source = _allItems;
         var filter = HistorySearchBox.Text.Trim();
         var filtered = source
             .Where(MatchesGroupFilter)
+            .Where(_statusFilter.Matches)
             .Where(account => string.IsNullOrEmpty(filter) || Matches(account, filter))
             .ToList();
 
@@ -230,6 +238,123 @@ public sealed partial class HistoryPage : Page, INotifyPropertyChanged
         HistorySummaryText.Text = hasAny
             ? Loc.Tf("History_Subtitle_Count_Format", _allItems.Count)
             : Loc.T("History_Subtitle");
+        HistoryListSummaryText.Text = Loc.Tf("History_Filter_Count_Format", _viewItems.Count, _allItems.Count);
+        HistoryFilterHintText.Text = Loc.T(_statusFilter.IsValidScoreRange
+            ? "History_Filter_Hint"
+            : "History_Filter_InvalidRange");
+        HistoryFilterHintText.Foreground = FormatHelper.GetStatusBrush(_statusFilter.IsValidScoreRange
+            ? InfoBarSeverity.Informational
+            : InfoBarSeverity.Error);
+    }
+
+    private void RebuildStatusFilterCombos()
+    {
+        _suppressStatusFilterChange = true;
+        try
+        {
+            PopulateStatusFilter(VacFilterCombo, _statusFilter.Vac.ToString(),
+                (nameof(HistoryBooleanFilter.All), "History_Filter_All"),
+                (nameof(HistoryBooleanFilter.Yes), "History_Filter_VacYes"),
+                (nameof(HistoryBooleanFilter.No), "History_Filter_VacNo"),
+                (nameof(HistoryBooleanFilter.Unknown), "History_Filter_Unknown"));
+            PopulateStatusFilter(ChinaFilterCombo, _statusFilter.China.ToString(),
+                (nameof(HistoryBooleanFilter.All), "History_Filter_All"),
+                (nameof(HistoryBooleanFilter.Yes), "History_Filter_ChinaYes"),
+                (nameof(HistoryBooleanFilter.No), "History_Filter_ChinaNo"),
+                (nameof(HistoryBooleanFilter.Unknown), "History_Filter_Unknown"));
+            PopulateStatusFilter(ScoreFilterCombo, _statusFilter.Score.ToString(),
+                (nameof(HistoryScoreFilter.All), "History_Filter_All"),
+                (nameof(HistoryScoreFilter.HasScore), "History_Filter_HasScore"),
+                (nameof(HistoryScoreFilter.NoScore), "History_Filter_NoScore"),
+                (nameof(HistoryScoreFilter.Unknown), "History_Filter_Unknown"));
+        }
+        finally
+        {
+            _suppressStatusFilterChange = false;
+        }
+    }
+
+    private static void PopulateStatusFilter(ComboBox combo, string selected, params (string Tag, string Key)[] options)
+    {
+        combo.Items.Clear();
+        foreach (var (tag, key) in options)
+        {
+            var item = new ComboBoxItem { Tag = tag, Content = Loc.T(key) };
+            combo.Items.Add(item);
+            if (tag == selected)
+            {
+                combo.SelectedItem = item;
+            }
+        }
+    }
+
+    private static T SelectedStatusFilter<T>(ComboBox combo) where T : struct, Enum =>
+        Enum.TryParse<T>((combo.SelectedItem as ComboBoxItem)?.Tag as string, out var value) ? value : default;
+
+    private void StatusFilterCombo_SelectionChanged(object sender, SelectionChangedEventArgs e) => ApplyStatusFilters();
+
+    private void ScoreFilterBox_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
+    {
+        if (!_historyFiltersReady || _suppressStatusFilterChange)
+        {
+            return;
+        }
+
+        // 优先分是整数；空框用 NaN 表示无边界，保留 NumberBox 的范围校验。
+        if (double.IsFinite(sender.Value) && sender.Value != Math.Round(sender.Value))
+        {
+            sender.Value = Math.Round(sender.Value);
+            return;
+        }
+
+        ApplyStatusFilters();
+    }
+
+    private void ApplyStatusFilters()
+    {
+        // XAML 初始化、语言切换和重置会触发事件；控件未齐备时不重建列表。
+        if (!_historyFiltersReady || _suppressStatusFilterChange)
+        {
+            return;
+        }
+
+        _statusFilter = new HistoryAccountFilter(
+            SelectedStatusFilter<HistoryBooleanFilter>(VacFilterCombo),
+            SelectedStatusFilter<HistoryBooleanFilter>(ChinaFilterCombo),
+            SelectedStatusFilter<HistoryScoreFilter>(ScoreFilterCombo),
+            double.IsFinite(MinScoreFilterBox.Value) ? (int)MinScoreFilterBox.Value : null,
+            double.IsFinite(MaxScoreFilterBox.Value) ? (int)MaxScoreFilterBox.Value : null);
+        _searchDebounceTimer.Stop();
+        RebuildView(GetSelectedSteamId());
+    }
+
+    private void ResetHistoryFiltersButton_Click(object sender, RoutedEventArgs e)
+    {
+        _suppressStatusFilterChange = true;
+        MinScoreFilterBox.Value = double.NaN;
+        MaxScoreFilterBox.Value = double.NaN;
+        _statusFilter = new();
+        _groupFilter = null;
+        HistorySearchBox.Text = string.Empty;
+        RebuildGroupFilterCombo();
+        RebuildStatusFilterCombos();
+        _suppressStatusFilterChange = false;
+        _searchDebounceTimer.Stop();
+        RebuildView(GetSelectedSteamId());
+    }
+
+    private void SelectAllHistoryButton_Click(object sender, RoutedEventArgs e)
+    {
+        // 先提交尚未触发去抖的搜索，保证全选与眼前的筛选条件一致。
+        _searchDebounceTimer.Stop();
+        RebuildView(GetSelectedSteamId());
+        foreach (var account in _viewItems)
+        {
+            _checkedKeys.Add(AccountHistoryService.GetAccountKey(account));
+            account.IsSelected = true;
+        }
+
+        UpdateBatchBar();
     }
 
     private static bool Matches(SteamAccountHistoryItem account, string filter)
@@ -1988,6 +2113,13 @@ public sealed partial class HistoryPage : Page, INotifyPropertyChanged
         BatchDeleteButton.IsEnabled = !isBusy;
         GroupFilterCombo.IsEnabled = !isBusy;
         ManageGroupsButton.IsEnabled = !isBusy;
+        VacFilterCombo.IsEnabled = !isBusy;
+        ChinaFilterCombo.IsEnabled = !isBusy;
+        ScoreFilterCombo.IsEnabled = !isBusy;
+        MinScoreFilterBox.IsEnabled = !isBusy;
+        MaxScoreFilterBox.IsEnabled = !isBusy;
+        ResetHistoryFiltersButton.IsEnabled = !isBusy;
+        SelectAllHistoryButton.IsEnabled = !isBusy && _viewItems.Count > 0;
 
         // 取消按钮仅忙碌时出现且保持可用，让用户中断本页发起的一键查询。
         CancelHistoryQueryButton.Visibility = isBusy && !_isQueryAllInFlight

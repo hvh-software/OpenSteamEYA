@@ -80,6 +80,8 @@
             <Grid RowSpacing="12">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
@@ -162,9 +164,101 @@
                     </StackPanel>
                 </Grid>
 
+                <Expander
+                    Grid.Row="1"
+                    Header="{x:Bind Strings.Get('History_Filter_Title'), Mode=OneWay}"
+                    HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Stretch">
+                    <StackPanel Spacing="12">
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <ComboBox
+                                x:Name="VacFilterCombo"
+                                Header="{x:Bind Strings.Get('History_Filter_Vac'), Mode=OneWay}"
+                                HorizontalAlignment="Stretch"
+                                SelectionChanged="StatusFilterCombo_SelectionChanged" />
+                            <ComboBox
+                                x:Name="ChinaFilterCombo"
+                                Grid.Column="1"
+                                Header="{x:Bind Strings.Get('History_Filter_China'), Mode=OneWay}"
+                                HorizontalAlignment="Stretch"
+                                SelectionChanged="StatusFilterCombo_SelectionChanged" />
+                        </Grid>
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <ComboBox
+                                x:Name="ScoreFilterCombo"
+                                Header="{x:Bind Strings.Get('History_Filter_Score'), Mode=OneWay}"
+                                HorizontalAlignment="Stretch"
+                                SelectionChanged="StatusFilterCombo_SelectionChanged" />
+                            <NumberBox
+                                x:Name="MinScoreFilterBox"
+                                Grid.Column="1"
+                                Header="{x:Bind Strings.Get('History_Filter_MinScore'), Mode=OneWay}"
+                                PlaceholderText="{x:Bind Strings.Get('History_Filter_NoLimit'), Mode=OneWay}"
+                                Minimum="0"
+                                Maximum="2147483647"
+                                SmallChange="1"
+                                SpinButtonPlacementMode="Compact"
+                                ValueChanged="ScoreFilterBox_ValueChanged" />
+                            <NumberBox
+                                x:Name="MaxScoreFilterBox"
+                                Grid.Column="2"
+                                Header="{x:Bind Strings.Get('History_Filter_MaxScore'), Mode=OneWay}"
+                                PlaceholderText="{x:Bind Strings.Get('History_Filter_NoLimit'), Mode=OneWay}"
+                                Minimum="0"
+                                Maximum="2147483647"
+                                SmallChange="1"
+                                SpinButtonPlacementMode="Compact"
+                                ValueChanged="ScoreFilterBox_ValueChanged" />
+                        </Grid>
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock
+                                x:Name="HistoryFilterHintText"
+                                TextWrapping="Wrap"
+                                VerticalAlignment="Center"
+                                Style="{StaticResource CaptionTextBlockStyle}" />
+                            <Button
+                                x:Name="ResetHistoryFiltersButton"
+                                Grid.Column="1"
+                                Content="{x:Bind Strings.Get('History_Filter_Reset'), Mode=OneWay}"
+                                Click="ResetHistoryFiltersButton_Click" />
+                        </Grid>
+                    </StackPanel>
+                </Expander>
+
+                <Grid Grid.Row="2" ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock
+                        x:Name="HistoryListSummaryText"
+                        VerticalAlignment="Center"
+                        Style="{StaticResource CaptionTextBlockStyle}"
+                        TextWrapping="Wrap" />
+                    <Button
+                        x:Name="SelectAllHistoryButton"
+                        Grid.Column="1"
+                        Content="{x:Bind Strings.Get('History_SelectAll_Button'), Mode=OneWay}"
+                        ToolTipService.ToolTip="{x:Bind Strings.Get('History_SelectAll_Tooltip'), Mode=OneWay}"
+                        Click="SelectAllHistoryButton_Click" />
+                </Grid>
+
                 <ListView
                     x:Name="HistoryAccountList"
-                    Grid.Row="1"
+                    Grid.Row="3"
                     SelectionMode="Single"
                     SelectionChanged="HistoryAccountList_SelectionChanged">
                     <ListView.ItemContainerStyle>
@@ -336,7 +430,7 @@
 
                 <StackPanel
                     x:Name="HistoryEmptyPanel"
-                    Grid.Row="1"
+                    Grid.Row="3"
                     Spacing="12"
                     HorizontalAlignment="Center"
                     VerticalAlignment="Center"
@@ -363,7 +457,7 @@
                 <!-- 批量操作栏：勾选任意卡片后浮现在列表底部，操作针对全部已勾选账号 -->
                 <Border
                     x:Name="BatchActionBar"
-                    Grid.Row="1"
+                    Grid.Row="3"
                     VerticalAlignment="Bottom"
                     HorizontalAlignment="Stretch"
                     Margin="0,0,0,4"

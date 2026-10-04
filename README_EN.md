@@ -46,6 +46,8 @@ Click **Refresh** to refresh all the data online.
 - Search by account name, username, or Steam64 ID
 - Batch import from the clipboard with `username----token` format, or export selected accounts to clipboard
 - Refresh account status or log in the account again directly from any history account
+- Select the visible list for batch queries, or query the entire history with one click; cancel anytime
+- Combine CS2 VAC flag, Premier rating range, China access, and group filters using the latest query results
 
 **Clear Workshop Subscriptions**
 
