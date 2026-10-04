@@ -55,6 +55,7 @@ public sealed partial class LoadoutPage : Page, INotifyPropertyChanged
         PoolGrid.ItemsSource = _poolItems;
         TeamSelector.SelectedItem = TeamTItem;
         Loc.LanguageChanged += OnLanguageChanged;
+        ActualThemeChanged += OnActualThemeChanged;
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -86,6 +87,18 @@ public sealed partial class LoadoutPage : Page, INotifyPropertyChanged
         });
     }
 
+    private void OnActualThemeChanged(FrameworkElement sender, object args)
+    {
+        _dispatcherQueue.TryEnqueue(() =>
+        {
+            if (_built)
+            {
+                BuildCells();
+                RefreshAll();
+            }
+        });
+    }
+
     // 一个固定格子的可视元素引用。
     private sealed class CellView
     {
@@ -94,13 +107,24 @@ public sealed partial class LoadoutPage : Page, INotifyPropertyChanged
         public Image Image = null!;
         public TextBlock Empty = null!;
         public TextBlock Name = null!;
-        public Rectangle Line = null!;
         public uint Slot;
         public CsLoadoutGroup Group;
     }
 
-    private static SolidColorBrush Brush(byte a, byte r, byte g, byte b) =>
-        new(Windows.UI.Color.FromArgb(a, r, g, b));
+    private SolidColorBrush ThemeBrush(string key)
+    {
+        if (Resources.TryGetValue(key, out var local) && local is SolidColorBrush localBrush)
+        {
+            return localBrush;
+        }
+
+        if (Application.Current.Resources.TryGetValue(key, out var app) && app is SolidColorBrush appBrush)
+        {
+            return appBrush;
+        }
+
+        return new SolidColorBrush(Windows.UI.Color.FromArgb(255, 96, 128, 160));
+    }
 
     private void BuildCells()
     {
@@ -110,13 +134,16 @@ public sealed partial class LoadoutPage : Page, INotifyPropertyChanged
             (Loc.T("Loadout_Group_Starter"), CsLoadoutGroup.StarterPistol, [CsWeaponCatalog.StarterPistolSlot]),
             (Loc.T("Loadout_Group_Other"), CsLoadoutGroup.OtherPistol, CsWeaponCatalog.OtherPistolSlots)
         ]);
-        BuildColumn(Col1Host, [(Loc.T("Loadout_Group_Mid"), CsLoadoutGroup.Mid, CsWeaponCatalog.MidSlots)]);
-        BuildColumn(Col2Host, [(Loc.T("Loadout_Group_Rifle"), CsLoadoutGroup.Rifle, CsWeaponCatalog.RifleSlots)]);
+        BuildColumn(Col1Host, [(Loc.T("Loadout_Group_Mid"), CsLoadoutGroup.Mid, CsWeaponCatalog.MidSlots)], stretchCells: true);
+        BuildColumn(Col2Host, [(Loc.T("Loadout_Group_Rifle"), CsLoadoutGroup.Rifle, CsWeaponCatalog.RifleSlots)], stretchCells: true);
         _built = true;
     }
 
-    // 每节：一个 Auto 行标题 + 若干 Star 行格子。Star 行让格子拉伸填满列高 → 各列底部对齐。
-    private void BuildColumn(Grid host, (string Title, CsLoadoutGroup Group, IReadOnlyList<uint> Slots)[] sections)
+    // 第一栏按内容决定整体高度；较短栏的格子均分剩余高度，与第一栏底部对齐。
+    private void BuildColumn(
+        Grid host,
+        (string Title, CsLoadoutGroup Group, IReadOnlyList<uint> Slots)[] sections,
+        bool stretchCells = false)
     {
         host.Children.Clear();
         host.RowDefinitions.Clear();
@@ -128,11 +155,8 @@ public sealed partial class LoadoutPage : Page, INotifyPropertyChanged
             var header = new TextBlock
             {
                 Text = title,
-                FontSize = 15,
-                FontWeight = FontWeights.SemiBold,
-                // 装备区在固定深色面板上，标题用固定浅色而非主题色。
-                Foreground = Brush(0xFF, 0xE6, 0xEA, 0xF0),
-                Margin = new Thickness(0, row == 0 ? 0 : 6, 0, 4)
+                Style = (Style)Resources["LoadoutSectionHeaderStyle"],
+                Margin = new Thickness(0, row == 0 ? 0 : 4, 0, 3)
             };
             Grid.SetRow(header, row);
             host.Children.Add(header);
@@ -140,7 +164,10 @@ public sealed partial class LoadoutPage : Page, INotifyPropertyChanged
 
             foreach (var slot in slots)
             {
-                host.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+                host.RowDefinitions.Add(new RowDefinition
+                {
+                    Height = stretchCells ? new GridLength(1, GridUnitType.Star) : GridLength.Auto
+                });
                 var cell = BuildCell(group, slot);
                 Grid.SetRow(cell.Root, row);
                 host.Children.Add(cell.Root);
@@ -154,58 +181,65 @@ public sealed partial class LoadoutPage : Page, INotifyPropertyChanged
     {
         var bg = new Border
         {
-            CornerRadius = new CornerRadius(4),
-            Background = Brush(0xFF, 0x24, 0x36, 0x4F),
-            BorderThickness = new Thickness(1),
-            BorderBrush = Brush(0x33, 0xFF, 0xFF, 0xFF)
+            Style = (Style)Resources["LoadoutCellBorderStyle"]
         };
         var image = new Image
         {
             Stretch = Stretch.Uniform,
-            Margin = new Thickness(16, 8, 16, 12),
+            MaxWidth = 80,
+            Height = 36,
             HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
             Visibility = Visibility.Collapsed
         };
         var empty = new TextBlock
         {
-            Text = "",
+            Text = "+",
+            Style = (Style)Resources["LoadoutEmptySlotStyle"],
             HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center
+            VerticalAlignment = VerticalAlignment.Center,
         };
         // 已装备武器名（左下角小字）：只有剪影认不出型号，尤其同类枪型。
         var name = new TextBlock
         {
-            FontSize = 11,
-            Foreground = Brush(0xFF, 0xC9, 0xD1, 0xDC),
-            HorizontalAlignment = HorizontalAlignment.Left,
-            VerticalAlignment = VerticalAlignment.Bottom,
-            Margin = new Thickness(10, 0, 10, 8),
+            Style = (Style)Resources["LoadoutWeaponNameStyle"],
+            FontSize = 13,
+            Margin = new Thickness(12, 0, 0, 0),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextAlignment = TextAlignment.Left,
+            MaxLines = 1,
             TextTrimming = TextTrimming.CharacterEllipsis,
             Visibility = Visibility.Collapsed
         };
-        var line = new Rectangle
-        {
-            Height = 2,
-            Fill = Brush(0x80, 0xFF, 0xFF, 0xFF),
-            VerticalAlignment = VerticalAlignment.Bottom,
-            Margin = new Thickness(16, 0, 16, 4),
-            Visibility = Visibility.Collapsed
-        };
-
         var content = new Grid();
+
+        var mediaRow = new Grid
+        {
+            Margin = new Thickness(12, 8, 12, 8),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        mediaRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(9, GridUnitType.Star) });
+        mediaRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(11, GridUnitType.Star) });
+
         content.Children.Add(bg);
-        content.Children.Add(image);
+        Grid.SetColumn(image, 0);
+        Grid.SetColumn(name, 1);
+        mediaRow.Children.Add(image);
+        mediaRow.Children.Add(name);
+        content.Children.Add(mediaRow);
+
         content.Children.Add(empty);
-        content.Children.Add(name);
-        content.Children.Add(line);
 
         var root = new Border
         {
             Child = content,
-            Margin = new Thickness(0, 0, 0, 6)
+            Margin = new Thickness(0, 0, 0, 12),
+            MinHeight = 72
         };
 
-        var cell = new CellView { Root = root, Bg = bg, Image = image, Empty = empty, Name = name, Line = line, Slot = slot, Group = group };
+        var cell = new CellView { Root = root, Bg = bg, Image = image, Empty = empty, Name = name, Slot = slot, Group = group };
         root.Tag = cell;
         root.PointerPressed += Cell_PointerPressed;
         root.PointerMoved += DragSource_PointerMoved;
@@ -237,7 +271,6 @@ public sealed partial class LoadoutPage : Page, INotifyPropertyChanged
             cell.Empty.Visibility = Visibility.Collapsed;
             cell.Name.Text = weapon.LocalizedName;
             cell.Name.Visibility = Visibility.Visible;
-            cell.Line.Visibility = Visibility.Visible;
         }
         else
         {
@@ -245,7 +278,6 @@ public sealed partial class LoadoutPage : Page, INotifyPropertyChanged
             cell.Image.Visibility = Visibility.Collapsed;
             cell.Empty.Visibility = Visibility.Visible;
             cell.Name.Visibility = Visibility.Collapsed;
-            cell.Line.Visibility = Visibility.Collapsed;
         }
     }
 
@@ -327,8 +359,13 @@ public sealed partial class LoadoutPage : Page, INotifyPropertyChanged
 
     private void PoolItem_PointerPressed(object sender, PointerRoutedEventArgs e)
     {
-        if (sender is not FrameworkElement { DataContext: LoadoutWeaponTile tile } origin ||
-            !IsPrimaryPress(e, origin))
+        if (sender is not FrameworkElement origin || !IsPrimaryPress(e, origin))
+        {
+            return;
+        }
+
+        var tile = origin.Tag as LoadoutWeaponTile ?? origin.DataContext as LoadoutWeaponTile;
+        if (tile is null)
         {
             return;
         }
@@ -433,7 +470,7 @@ public sealed partial class LoadoutPage : Page, INotifyPropertyChanged
         // 拖拽真正启动后，原格子随后的 Tapped 不应再触发「点击卸下」。
         _suppressNextTap = true;
 
-        var image = new Image { Width = 56, Height = 24, Stretch = Stretch.Uniform };
+        var image = new Image { Width = 74, Height = 26, Stretch = Stretch.Uniform };
         if (CsWeaponCatalog.ByDef(drag.Def) is { } weapon)
         {
             image.Source = new SvgImageSource(new Uri(weapon.IconUri));
@@ -441,23 +478,24 @@ public sealed partial class LoadoutPage : Page, INotifyPropertyChanged
 
         var caption = new TextBlock
         {
-            FontSize = 11,
-            Foreground = Brush(0xFF, 0xE6, 0xEA, 0xF0),
+            FontSize = 12,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = ThemeBrush("TextFillColorPrimaryBrush"),
             VerticalAlignment = VerticalAlignment.Center
         };
 
-        var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
         panel.Children.Add(image);
         panel.Children.Add(caption);
 
         drag.GhostCaption = caption;
         drag.Ghost = new Border
         {
-            Background = Brush(0xE6, 0x20, 0x2B, 0x3A),
-            BorderBrush = Brush(0xFF, 0x3A, 0x46, 0x58),
+            Background = ThemeBrush("CardBackgroundFillColorDefaultBrush"),
+            BorderBrush = ThemeBrush("AccentFillColorDefaultBrush"),
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(4),
-            Padding = new Thickness(8, 4, 8, 4),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(12, 7, 12, 7),
             IsHitTestVisible = false
         };
         drag.Ghost.Child = panel;
@@ -497,14 +535,14 @@ public sealed partial class LoadoutPage : Page, INotifyPropertyChanged
 
         if (_dropTarget is { } previous)
         {
-            previous.Bg.BorderBrush = Brush(0x33, 0xFF, 0xFF, 0xFF);
-            previous.Bg.BorderThickness = new Thickness(1);
+            previous.Bg.ClearValue(Border.BorderBrushProperty);
+            previous.Bg.ClearValue(Border.BorderThicknessProperty);
         }
 
         _dropTarget = target;
         if (target is not null)
         {
-            target.Bg.BorderBrush = Brush(0xFF, 0x4C, 0xC2, 0xFF);
+            target.Bg.BorderBrush = ThemeBrush("AccentFillColorDefaultBrush");
             target.Bg.BorderThickness = new Thickness(2);
         }
     }

@@ -73,6 +73,105 @@
                 </Grid>
             </Border>
 
+            <!-- 全局字体：扫描运行目录 Assets/Fonts，支持打开目录并手动刷新。 -->
+            <Border Style="{StaticResource CardBorderStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                        <TextBlock
+                            Text="{x:Bind Strings.Get('Settings_Font_Section'), Mode=OneWay}"
+                            Style="{StaticResource SectionTitleTextStyle}" />
+                        <TextBlock
+                            Text="{x:Bind Strings.Get('Settings_Font_Desc'), Mode=OneWay}"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            TextWrapping="Wrap" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                        <ComboBox
+                            x:Name="FontComboBox"
+                            MinWidth="220"
+                            MaxDropDownHeight="420"
+                            IsTextSearchEnabled="True"
+                            SelectionChanged="FontComboBox_SelectionChanged" />
+                        <Button
+                            x:Name="OpenFontFolderButton"
+                            Width="36"
+                            Height="32"
+                            Padding="0"
+                            Click="OpenFontFolderButton_Click"
+                            AutomationProperties.Name="{x:Bind Strings.Get('Settings_Font_OpenFolder'), Mode=OneWay}"
+                            ToolTipService.ToolTip="{x:Bind Strings.Get('Settings_Font_OpenFolder'), Mode=OneWay}">
+                            <FontIcon Glyph="&#xE838;" FontSize="16" />
+                        </Button>
+                        <Button
+                            x:Name="RefreshFontListButton"
+                            Width="36"
+                            Height="32"
+                            Padding="0"
+                            Click="RefreshFontListButton_Click"
+                            AutomationProperties.Name="{x:Bind Strings.Get('Settings_Font_Refresh'), Mode=OneWay}"
+                            ToolTipService.ToolTip="{x:Bind Strings.Get('Settings_Font_Refresh'), Mode=OneWay}">
+                            <FontIcon Glyph="&#xE72C;" FontSize="16" />
+                        </Button>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- 毛玻璃与全局表面透明度。 -->
+            <Border Style="{StaticResource CardBorderStyle}">
+                <StackPanel Spacing="12">
+                    <Grid ColumnSpacing="16">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Spacing="2" VerticalAlignment="Center">
+                            <TextBlock
+                                Text="{x:Bind Strings.Get('Settings_Glass_Section'), Mode=OneWay}"
+                                Style="{StaticResource SectionTitleTextStyle}" />
+                            <TextBlock
+                                Text="{x:Bind Strings.Get('Settings_Glass_Desc'), Mode=OneWay}"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                TextWrapping="Wrap" />
+                        </StackPanel>
+                        <ToggleSwitch
+                            x:Name="GlassEffectToggle"
+                            Grid.Column="1"
+                            MinWidth="0"
+                            OnContent="{x:Null}"
+                            OffContent="{x:Null}"
+                            VerticalAlignment="Center"
+                            Toggled="GlassEffectToggle_Toggled" />
+                    </Grid>
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="48" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock
+                            VerticalAlignment="Center"
+                            Text="{x:Bind Strings.Get('Settings_Glass_Opacity'), Mode=OneWay}"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <Slider
+                            x:Name="BackgroundOpacitySlider"
+                            Grid.Column="1"
+                            Minimum="60"
+                            Maximum="80"
+                            StepFrequency="1"
+                            ValueChanged="BackgroundOpacitySlider_ValueChanged" />
+                        <TextBlock
+                            x:Name="BackgroundOpacityText"
+                            Grid.Column="2"
+                            VerticalAlignment="Center"
+                            HorizontalAlignment="Right" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+
             <!-- 更新站点：可选直连或代理站，手动检测当前选择站点延迟 -->
             <Border Style="{StaticResource CardBorderStyle}">
                 <StackPanel Spacing="10">
