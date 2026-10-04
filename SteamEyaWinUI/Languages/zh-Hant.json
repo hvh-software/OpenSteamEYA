@@ -512,6 +512,7 @@
     "License_Error_InvalidKeyOrServer": "序列號不合法或供應商選擇有誤。",
     "License_Error_WrongKeyOrServer": "序列號有誤或供應商選擇有誤。",
     "License_Error_ResponseTooShort": "供應商傳回內容過短。",
+    "License_Error_UpstreamMessage_Format": "供應商傳回：{0}。請檢查序列號是否正確、是否已失效，以及供應商是否選對。",
     "License_Error_NoAccountData": "上游 JSON 沒有帳號資料。",
     "License_Error_MissingField_Format": "上游 JSON 缺少欄位：{0}",
     "License_Error_EmptyField_Format": "上游 JSON 欄位為空：{0}",
