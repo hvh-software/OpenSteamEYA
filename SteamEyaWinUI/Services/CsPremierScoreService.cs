@@ -214,13 +214,7 @@ internal sealed class CsPremierScoreService
             }
 
             var html = await response.Content.ReadAsStringAsync(cancellationToken);
-            if (string.IsNullOrWhiteSpace(html) ||
-                html.Contains("<TITLE>Access Denied</TITLE>", StringComparison.OrdinalIgnoreCase))
-            {
-                return null;
-            }
-
-            return html.Contains("Steam China PW Grant", StringComparison.Ordinal);
+            return SteamLicensePageParser.HasSteamChinaPwGrant(html);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
