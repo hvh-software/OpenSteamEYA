@@ -217,6 +217,7 @@
     "Account_Score_WithWins_Format": "{0:N0} ({1} wins)",
     "Account_Score_Pending": "Pending",
     "Account_Pending": "Pending",
+    "Account_Query_Unavailable": "Not retrieved (retry later)",
     "Account_Cooldown_Summary_Format": "Cooldown: {0}",
     "Account_InMatch_Maybe": "May currently be in a match.",
     "Account_InMatch_None": "No match was found.",

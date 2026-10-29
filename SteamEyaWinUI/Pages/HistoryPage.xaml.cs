@@ -1171,9 +1171,13 @@ public sealed partial class HistoryPage : Page, INotifyPropertyChanged
         {
             var score = await loginPage.QueryAndSaveCsStatusAsync(
                 account.AccountName, account.EyaToken, cancellationToken);
+
+            // 冷却/VAC 这次没取到（GC 9110 未答 + 网页兜底也没读到）时别报成功：
+            // 卡片上会显示「查询未取到（可重试）」，状态栏同步降为 Warning，避免看起来「查完了还是待查询」。
+            var restrictionsRead = score.PenaltySeconds.HasValue || score.GcVacBannedOrUnknown.HasValue;
             AppState.ShowStatus(
                 Loc.Tf("History_Status_QueryDone_Format", account.AccountTitle, score.DisplayText, score.PlayerLevelText, score.CooldownText, score.GcVacText),
-                InfoBarSeverity.Success);
+                restrictionsRead ? InfoBarSeverity.Success : InfoBarSeverity.Warning);
         }
         catch (OperationCanceledException)
         {

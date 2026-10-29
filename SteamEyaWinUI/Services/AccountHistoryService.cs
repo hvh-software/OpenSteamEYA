@@ -262,20 +262,34 @@ internal sealed class AccountHistoryService
             item.EyaToken = eyaToken;
             item.TokenExpiresAt = tokenExpiresAt;
             item.CompetitiveScore = score.DisplayText;
-            item.AccountStatus = score.StatusText;
             item.JwtAvailable = jwtValidation.IsValid;
             item.JwtStatus = jwtValidation.IsValid ? "有效" : "无效";
             item.JwtValidatedAt = DateTimeOffset.Now;
             item.PremierScore = score.PremierRanking is null ? null : checked((int)score.PremierRanking.RankId);
             item.PremierWins = score.PremierRanking is null ? null : checked((int)score.PremierRanking.Wins);
             item.PremierScoreUpdatedAt = DateTimeOffset.Now;
-            item.CooldownSeconds = score.PenaltySeconds;
-            item.CooldownReason = score.PenaltyReason;
-            item.GcVacBanned = score.GcVacBannedOrUnknown;
             item.CsPlayerLevel = score.PlayerLevel;
             item.InCsMatch = score.InMatch;
-            item.Cs2IsChina = score.Cs2IsChina;
-            item.CsStatusUpdatedAt = DateTimeOffset.Now;
+
+            // 冷却 / GC VAC 是三态：null 表示这次确实没取到（GC 9110 未答、网页兜底也没读到），
+            // 与「确认无」(0) 严格不同。拿 null 去覆盖上次已知值，等于一键查询一次就把已有结果
+            // 抹回「待查询」，因此只在本次有值时才写；本次没取到就保留旧值。
+            item.CooldownSeconds = score.PenaltySeconds ?? item.CooldownSeconds;
+            item.CooldownReason = score.PenaltyReason ?? item.CooldownReason;
+            item.GcVacBanned = score.GcVacBannedOrUnknown ?? item.GcVacBanned;
+            item.Cs2IsChina = score.Cs2IsChina ?? item.Cs2IsChina;
+
+            // CsStatusCheckedAt：这次确实查过（成功与否都记），界面据此把「未知」分成
+            // 「从未查询」与「查询失败（可重试）」两种文案。
+            item.CsStatusCheckedAt = DateTimeOffset.Now;
+
+            // CsStatusUpdatedAt 是冷却倒计时的锚点，只在真读到冷却/VAC 时才前移，
+            // 否则倒计时会从「本次查询时刻」重算，凭空把剩余时间拉长。
+            if (score.PenaltySeconds.HasValue || score.GcVacBannedOrUnknown.HasValue)
+            {
+                item.CsStatusUpdatedAt = DateTimeOffset.Now;
+                item.AccountStatus = score.StatusText;
+            }
 
             if (!string.IsNullOrWhiteSpace(personaName))
             {

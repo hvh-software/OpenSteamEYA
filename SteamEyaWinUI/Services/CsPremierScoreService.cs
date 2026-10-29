@@ -107,7 +107,18 @@ internal sealed class CsPremierScoreService
                 }
                 catch (TimeoutException)
                 {
-                    // GC 重连失败：优先分已拿到，冷却按未知返回。
+                    // 断开/重连期间 9110 可能已经到达并被接收层缓存（cacheUnmatched: true）。
+                    // 这里必须先捞一次缓存再决定放弃：否则这条已经到手的数据会被直接丢掉，
+                    // 冷却与 GC VAC 双双回落成「待查询」——就是「重连超时后永远待查询」的成因。
+                    helloData = await WaitForMatchmakingHelloAsync(
+                        cmClient,
+                        CachedHelloPollTimeout,
+                        cancellationToken);
+                    if (helloData is null)
+                    {
+                        AppLog.Warn($"GC 9110 未取到（第 {cycle} 轮重连超时），冷却/VAC 交给网页兜底。");
+                    }
+
                     break;
                 }
 
@@ -128,14 +139,40 @@ internal sealed class CsPremierScoreService
 
             var cs2IsChina = await cs2IsChinaTask;
 
+            var cooldownSeconds = helloData?.PenaltySeconds;
+            var penaltyReason = helloData?.PenaltyReason;
+            var gcVacBanned = helloData?.VacBanned;
+
+            // 9110 始终没来（黑号、GC 未下发）时，别把冷却与 VAC 双双留成未知：
+            // 用同一个已登录会话去 help.steampowered.com 兜一次底，两页各自独立读，读不到才保持未知。
+            if (helloData is null)
+            {
+                var web = await SteamRestrictionWebReader.ReadAsync(
+                    webSession,
+                    token => SteamWebSession.BuildAsync(cmClient, refreshToken, steamId, token),
+                    cancellationToken);
+                cooldownSeconds = web.CooldownSeconds;
+                // 网页读出来的是 bool?（有/无标记/未知），这里回到 GC 的 int? 约定：null 未知 / 0 无 / 非 0 有。
+                gcVacBanned = web.VacBanned is { } flagged ? (flagged ? 1 : 0) : null;
+                AppLog.Info(
+                    $"冷却/VAC 网页兜底（{steamId}）：冷却={DescribeRestriction(cooldownSeconds)}，" +
+                    $"GC VAC={DescribeFlag(gcVacBanned)}。");
+            }
+            else
+            {
+                AppLog.Info(
+                    $"冷却/VAC 来自 GC 9110（{steamId}）：冷却={DescribeRestriction(cooldownSeconds)}，" +
+                    $"GC VAC={DescribeFlag(gcVacBanned)}。");
+            }
+
             return new CsPremierScoreResult(
                 steamId,
                 accountId,
                 premier,
                 profile.Rankings,
-                helloData?.PenaltySeconds,
-                helloData?.PenaltyReason,
-                helloData?.VacBanned,
+                cooldownSeconds,
+                penaltyReason,
+                gcVacBanned,
                 profile.PlayerLevel,
                 profile.InMatch,
                 cs2IsChina);
@@ -225,6 +262,21 @@ internal sealed class CsPremierScoreService
             return null;
         }
     }
+
+    /// <summary>日志用：把三态冷却值写成「未知 / 无 / N 秒」，GC 与网页兜底两条来源便于对照。</summary>
+    private static string DescribeRestriction(uint? seconds) => seconds switch
+    {
+        null => "未知",
+        0 => "无",
+        _ => $"{seconds} 秒"
+    };
+
+    private static string DescribeFlag(int? flagged) => flagged switch
+    {
+        null => "未知",
+        0 => "无标记",
+        _ => "有标记"
+    };
 
     private static byte[] EncodePlayersProfileRequest(uint accountId)
     {

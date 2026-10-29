@@ -87,6 +87,13 @@ public sealed partial class SteamAccountHistoryItem : INotifyPropertyChanged
 
     public DateTimeOffset? CsStatusUpdatedAt { get; set; }
 
+    /// <summary>
+    /// 最近一次「尝试查询」冷却/VAC 的时刻（成功与否都记）。null 表示这条记录从没查过。
+    /// 与 <see cref="CsStatusUpdatedAt"/> 分工：后者是冷却倒计时锚点，只在真读到数据时前移；
+    /// 界面用本字段把「未知」分成「待查询」与「查询失败（可重试）」，两者不再共用一句文案。
+    /// </summary>
+    public DateTimeOffset? CsStatusCheckedAt { get; set; }
+
     private string? _note;
 
     /// <summary>用户备注（可为空）。跟随账号持久化，可在详情面板编辑，并计入搜索。</summary>
@@ -152,18 +159,26 @@ public sealed partial class SteamAccountHistoryItem : INotifyPropertyChanged
     // GcVacBanned 是 bool?，转成 FormatHelper 的 int? 约定（null 未知 / 0 无 / 非 0 有标记）。
     private int? GcVacBannedAsInt => GcVacBanned.HasValue ? (GcVacBanned.Value ? 1 : 0) : null;
 
+    /// <summary>
+    /// 冷却 / GC VAC 的「未知」有两种，必须分开显示：从没查过 = 待查询；
+    /// 查过但这次两路（GC 9110 + 网页兜底）都没读到 = 查询失败，可重试。
+    /// 两者共用一句「待查询」正是「一键查询后永远停在待查询」看起来没修的界面根因。
+    /// </summary>
+    private string UnknownRestrictionText =>
+        CsStatusCheckedAt is null ? Loc.T("Account_Pending") : Loc.T("Account_Query_Unavailable");
+
     [JsonIgnore]
-    public string CooldownText => FormatHelper.FormatCooldownText(CooldownSeconds, CooldownReason, Loc.T("Account_Pending"));
+    public string CooldownText => FormatHelper.FormatCooldownText(CooldownSeconds, CooldownReason, UnknownRestrictionText);
 
     [JsonIgnore]
     public string CooldownSummaryText => Loc.Tf("Account_Cooldown_Summary_Format", CooldownText);
 
     [JsonIgnore]
-    public string GcVacText => FormatHelper.FormatGcVacText(GcVacBannedAsInt, Loc.T("Account_Pending"));
+    public string GcVacText => FormatHelper.FormatGcVacText(GcVacBannedAsInt, UnknownRestrictionText);
 
     [JsonIgnore]
     public string CooldownStatusText =>
-        FormatHelper.FormatCooldownStatusText(CooldownSeconds, CooldownReason, GcVacBannedAsInt, Loc.T("Account_Pending"), Loc.T("Account_Pending"));
+        FormatHelper.FormatCooldownStatusText(CooldownSeconds, CooldownReason, GcVacBannedAsInt, UnknownRestrictionText, UnknownRestrictionText);
 
     // ---------- 冷却倒计时（快照剩余秒 − 已流逝时间，实时递减；由页面每秒计时器驱动刷新绑定） ----------
 
@@ -202,7 +217,7 @@ public sealed partial class SteamAccountHistoryItem : INotifyPropertyChanged
 
     [JsonIgnore]
     public string RemainingCooldownText =>
-        FormatHelper.FormatCooldownCountdownText(RemainingCooldownSeconds, CooldownReason, Loc.T("Account_Pending"));
+        FormatHelper.FormatCooldownCountdownText(RemainingCooldownSeconds, CooldownReason, UnknownRestrictionText);
 
     [JsonIgnore]
     public string RemainingCooldownSummaryText => Loc.Tf("Account_Cooldown_Summary_Format", RemainingCooldownText);
@@ -211,7 +226,7 @@ public sealed partial class SteamAccountHistoryItem : INotifyPropertyChanged
     public string RemainingCooldownStatusText => Loc.Tf(
         "Format_CooldownStatus_Format",
         RemainingCooldownText,
-        FormatHelper.FormatGcVacText(GcVacBannedAsInt, Loc.T("Account_Pending")));
+        FormatHelper.FormatGcVacText(GcVacBannedAsInt, UnknownRestrictionText));
 
     [JsonIgnore]
     public bool HasNote => !string.IsNullOrWhiteSpace(Note);
@@ -240,7 +255,8 @@ public sealed partial class SteamAccountHistoryItem : INotifyPropertyChanged
     {
         get
         {
-            var status = string.IsNullOrWhiteSpace(AccountStatus) ? Loc.T("Account_Pending") : AccountStatus;
+            // 没有落盘状态文案时按三态区分：从没查过 = 待查询；查过但没取到 = 查询未取到（可重试）。
+            var status = string.IsNullOrWhiteSpace(AccountStatus) ? UnknownRestrictionText : AccountStatus;
             var updatedAt = CsStatusUpdatedAt ?? PremierScoreUpdatedAt;
             if (!updatedAt.HasValue)
             {

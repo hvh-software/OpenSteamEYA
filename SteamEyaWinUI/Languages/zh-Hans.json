@@ -217,6 +217,7 @@
     "Account_Score_WithWins_Format": "{0:N0}（胜场 {1}）",
     "Account_Score_Pending": "待查询",
     "Account_Pending": "待查询",
+    "Account_Query_Unavailable": "查询未取到（可重试）",
     "Account_Cooldown_Summary_Format": "冷却：{0}",
     "Account_InMatch_Maybe": "可能在对局中",
     "Account_InMatch_None": "未发现对局",
