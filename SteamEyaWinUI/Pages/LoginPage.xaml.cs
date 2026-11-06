@@ -553,8 +553,10 @@ public sealed partial class LoginPage : Page, INotifyPropertyChanged
             var (accountName, eyaToken) = await GetCredentialsAsync(cancellationToken);
             var score = await QueryAndSaveCsStatusAsync(accountName, eyaToken, cancellationToken);
             ShowStatus(
-                Loc.Tf("Login_Status_QueryDone_Format", score.DisplayText, score.PlayerLevelText, score.CooldownText, score.GcVacText),
-                InfoBarSeverity.Success);
+                Loc.Tf(
+                    score.HasCooldownData ? "Login_Status_QueryDone_Format" : "Login_Status_QueryPartial_Format",
+                    score.DisplayText, score.PlayerLevelText, score.CooldownText, score.GcVacText),
+                score.HasCooldownData ? InfoBarSeverity.Success : InfoBarSeverity.Warning);
         }
         catch (OperationCanceledException)
         {

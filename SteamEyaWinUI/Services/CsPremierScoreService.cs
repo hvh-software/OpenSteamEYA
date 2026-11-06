@@ -107,7 +107,13 @@ internal sealed class CsPremierScoreService
                 }
                 catch (TimeoutException)
                 {
-                    // GC 重连失败：优先分已拿到，冷却按未知返回。
+                    // 9110 可独立于 welcome 到达；重连超时也要保留已接收或缓存的冷却数据。
+                    helloData = await helloTask;
+                    helloData ??= await WaitForMatchmakingHelloAsync(
+                        cmClient,
+                        CachedHelloPollTimeout,
+                        cancellationToken);
+                    AppLog.Warn($"CS2 GC reconnect welcome timed out (cycle {cycle}); matchmaking hello available: {helloData is not null}.");
                     break;
                 }
 
@@ -127,6 +133,11 @@ internal sealed class CsPremierScoreService
                 ranking.RankTypeId == PremierRankTypeId);
 
             var cs2IsChina = await cs2IsChinaTask;
+
+            if (helloData is null)
+            {
+                AppLog.Warn("CS2 account query returned partial results: no matchmaking hello was available.");
+            }
 
             return new CsPremierScoreResult(
                 steamId,

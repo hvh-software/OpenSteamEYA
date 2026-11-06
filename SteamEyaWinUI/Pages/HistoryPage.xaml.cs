@@ -1172,8 +1172,10 @@ public sealed partial class HistoryPage : Page, INotifyPropertyChanged
             var score = await loginPage.QueryAndSaveCsStatusAsync(
                 account.AccountName, account.EyaToken, cancellationToken);
             AppState.ShowStatus(
-                Loc.Tf("History_Status_QueryDone_Format", account.AccountTitle, score.DisplayText, score.PlayerLevelText, score.CooldownText, score.GcVacText),
-                InfoBarSeverity.Success);
+                Loc.Tf(
+                    score.HasCooldownData ? "History_Status_QueryDone_Format" : "History_Status_QueryPartial_Format",
+                    account.AccountTitle, score.DisplayText, score.PlayerLevelText, score.CooldownText, score.GcVacText),
+                score.HasCooldownData ? InfoBarSeverity.Success : InfoBarSeverity.Warning);
         }
         catch (OperationCanceledException)
         {
